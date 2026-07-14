@@ -101,6 +101,10 @@ The Phase 4 "scripted happy-path walkthrough" is a section of the README (UI ste
 
 The Phase 1 plan gated a one-shot repair attempt (feed the validation error back once) on the measured invalid-output rate of whole-spec generation. Measured it via `scripts/measure/measure_unknowns.py`: 0/8 descriptions — including a prompt-injection and an unmappable "taxes and pizza" prompt — produced an invalid spec (the off-topic ones came back as valid empty-tool specs, not validation failures). At a 0% rate the repair path would be dead code, so it's **cut, not deferred**: the existing boundary guard (clean `BuilderError`, never persist an invalid spec) is the whole story. The same run confirmed the edit loop's `MAX_EDIT_ITERATIONS = 8` cap is pure headroom (edits finish in 2–3 LLM turns, 0 fallbacks) — left as-is, a safety net that correctly never trips on realistic requests.
 
+## Live session moved from an in-page panel to its own window (UI)
+
+The live session (lead picker + Run + streamed steps + outcome) was a right-hand column inside the builder; it's now a standalone page (`static/session.html` + `session.js`) opened by a "Launch assistant" button in the builder header, per window with `?spec=<id>`. Rationale: the builder (author a spec) and the runtime view (watch it act) are two different jobs — separating them lets you run an assistant in one window while editing in another, and each window names the assistant it's running (fetched by id) so multiple live sessions stay legible. The run/stream JS was relocated verbatim (same endpoints, same reconnect-replay behavior), not rewritten; the session window carries its own small `el` helper rather than importing the builder's `app.js`.
+
 ## What was deliberately left out (documented, not forgotten)
 
 Real telephony/calendar/CRM integrations, multiple live assistant archetypes in the demo, tools beyond the three registered, cross-run learning, auth/multi-user, and a production-grade queue/DB. Each is a natural next step once the platform proves out — all sit cleanly behind the seams above, so extending later doesn't require rearchitecting.
