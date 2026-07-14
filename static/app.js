@@ -78,7 +78,7 @@ function renderSidebar() {
       onclick: () => showSpecCard(spec, false),
     }, [
       el("div", { className: "name" }, [spec.name]),
-      el("div", { className: "date" }, [new Date(spec.created_at).toLocaleString()]),
+      el("div", { className: "date" }, [new Date(spec.updated_at).toLocaleString()]),
     ]);
     specListEl.appendChild(item);
   });

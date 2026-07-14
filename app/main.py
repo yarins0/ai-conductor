@@ -69,6 +69,7 @@ def spec_record_to_response(record: db.SpecRecord) -> dict:
         "id": record.id,
         "name": record.name,
         "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
         "spec": json.loads(record.spec_json),
     }
 

@@ -89,9 +89,9 @@ def get_spec(spec_id: int) -> SpecRecord | None:
 
 def list_specs() -> list[SpecRecord]:
     with Session(engine) as session:
-        # id tiebreaker: two saves can land on the same timestamp
+        # Most-recently-edited first; id tiebreaker for same-timestamp saves.
         statement = select(SpecRecord).order_by(
-            SpecRecord.created_at.desc(), SpecRecord.id.desc()
+            SpecRecord.updated_at.desc(), SpecRecord.id.desc()
         )
         return list(session.exec(statement))
 
