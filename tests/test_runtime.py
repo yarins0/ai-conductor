@@ -7,6 +7,7 @@ import app.providers as providers
 from app import db
 from app.runtime import execute_run
 from app.spec import AssistantSpec, ToolConfig
+from app.tools import get_provider
 
 SAMPLE_SPEC = AssistantSpec(
     name="SDR Assistant",
@@ -77,6 +78,36 @@ def test_not_qualified_lead_stops_after_qualify() -> None:
     updated_lead = db.get_lead(lead.id)
     assert updated_lead.status == "not_qualified"
     assert updated_lead.intent_score is not None
+
+
+def test_provider_exception_fails_run_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A provider bug must never crash the server or strand a run (runtime.py
+    # comment) — it should persist an error step and fail the run cleanly.
+    lead = _lead_by_profile("books")
+    spec = AssistantSpec(
+        name="Flaky Assistant",
+        objective="Trip over a broken provider.",
+        persona="N/A",
+        tools=[ToolConfig(name="reach"), ToolConfig(name="qualify")],
+    )
+    spec_record = db.save_spec(spec)
+    run = db.create_run(spec_id=spec_record.id, lead_id=lead.id)
+
+    async def _raise(lead, settings):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(get_provider("reach"), "execute", _raise)
+
+    asyncio.run(execute_run(run.id, spec, lead))
+
+    steps = db.list_run_steps(run.id)
+    assert len(steps) == 1
+    error_result = json.loads(steps[0].result_json)
+    assert error_result["status"] == "error"
+    assert error_result["outcome"] == "provider_error"
+
+    finished_run = db.get_run(run.id)
+    assert finished_run.status == "failed"
 
 
 def test_unregistered_tool_persists_error_and_fails_run() -> None:

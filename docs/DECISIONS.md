@@ -85,6 +85,18 @@ The live stream (`GET /api/runs/{id}/stream`) is an async generator that polls t
 
 The Session panel + run/stream/edit logic pushed `static/index.html` to ~570 lines, over the project's 500-line cap. Split the `<script>` body into `static/app.js` (referenced via the existing `/static` mount). The "single static file, no build step" decision is kept in spirit — still vanilla JS, no bundler, no framework; the split is mechanical and `index.html` stays markup+CSS only.
 
+## Phase 4 break-testing: force the failure modes, assert the existing guards (Phase 4)
+
+Phase 4 verifies the guards Phases 1–3 built, it does not add new ones. The "break-testing pass" and the "few targeted tests" collapsed into one deliverable: three unit tests that each force a failure mode and assert the guard fires — create-path invalid LLM output → `BuilderError` (the boundary validation itself, previously only covered at the API 422 layer), a provider raising mid-run → run persists an error step and finishes `failed`, and an Anthropic error mid-edit-loop → whole-spec regeneration fallback. Plus one live cold-demo pass (404s, edit, all three lead branches) for end-to-end confidence.
+
+## `_finalize` invalid-final-spec path left untested (Phase 4)
+
+`edit_spec`'s `_finalize` fallback (regenerate if the edited working copy somehow fails validation) is unreachable via normal tool inputs — every mutation already re-validates in `_apply_mutation` before it's applied, so the working copy is valid by construction when `_finalize` runs. It's kept as defense-in-depth but left untested rather than contriving an unreachable state to exercise it (YAGNI on the test).
+
+## Scripted walkthrough lives in the README, not a separate script (Phase 4)
+
+The Phase 4 "scripted happy-path walkthrough" is a section of the README (UI steps + equivalent curl) rather than a runnable `scripts/demo.py`. A reviewer reads the walkthrough where they already are, there's nothing extra to maintain or keep in sync with the routes, and the three deterministic seeded leads already make the happy path and both failure branches reproducible on demand.
+
 ## What was deliberately left out (documented, not forgotten)
 
 Real telephony/calendar/CRM integrations, multiple live assistant archetypes in the demo, tools beyond the three registered, cross-run learning, auth/multi-user, and a production-grade queue/DB. Each is a natural next step once the platform proves out — all sit cleanly behind the seams above, so extending later doesn't require rearchitecting.

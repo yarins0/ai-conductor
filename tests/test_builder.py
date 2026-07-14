@@ -6,6 +6,8 @@ holding tool_use blocks that expose `.type` / `.name` / `.input` / `.id`.
 
 import types
 
+import anthropic
+import httpx
 import pytest
 
 from app import builder, db
@@ -42,6 +44,53 @@ def _fake_client_returning(responses: list) -> types.SimpleNamespace:
 
 def _patch_client(monkeypatch, client: types.SimpleNamespace) -> None:
     monkeypatch.setattr(builder.anthropic, "Anthropic", lambda: client)
+
+
+def test_create_spec_invalid_output_raises_builder_error(monkeypatch):
+    # Missing required field `objective` — boundary validation (rule #2) must
+    # reject this before anything is persisted.
+    client = _fake_client_returning([
+        _response(_block("save_assistant_spec", {"name": "X", "persona": "Y", "tools": []})),
+    ])
+    _patch_client(monkeypatch, client)
+
+    with pytest.raises(builder.BuilderError):
+        builder.create_spec("anything")
+
+
+def test_create_spec_no_tool_use_raises_builder_error(monkeypatch):
+    # A refusal or plain-text response has no tool_use block at all.
+    client = _fake_client_returning([
+        types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text="refused")]),
+    ])
+    _patch_client(monkeypatch, client)
+
+    with pytest.raises(builder.BuilderError):
+        builder.create_spec("anything")
+
+
+def test_edit_falls_back_when_llm_errors(monkeypatch):
+    # A mid-loop API failure must not dead-end the edit (rule #4) — it falls
+    # back to whole-spec regeneration via create_spec.
+    def raising_create(**_kwargs):
+        raise anthropic.APIError(
+            "boom", request=httpx.Request("POST", "https://api.anthropic.com"), body=None
+        )
+
+    client = types.SimpleNamespace(messages=types.SimpleNamespace(create=raising_create))
+    _patch_client(monkeypatch, client)
+
+    sentinel = AssistantSpec(
+        name="Sentinel Assistant",
+        objective="Stand in for a regenerated spec.",
+        persona="N/A",
+        tools=[ToolConfig(name="reach")],
+    )
+    monkeypatch.setattr(builder, "create_spec", lambda description: sentinel)
+
+    result = builder.edit_spec(SAMPLE_SPEC, "anything")
+
+    assert result is sentinel
 
 
 def test_edit_applies_mutations_then_finishes(monkeypatch):

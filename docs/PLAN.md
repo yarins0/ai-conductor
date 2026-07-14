@@ -68,11 +68,11 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 ### Phase 4 — Hardening & Launch
 **Goal**: Robust enough to demo cold, and legible to a reviewer.
 **Tasks**:
-- [ ] Break-testing pass: force invalid LLM output, provider failures, and a non-terminating edit request; verify each fails the way Phases 1–3 built it to (clean validation error, outcome branch, step cap + create-path fallback) — this phase verifies guards, it does not build them
-- [ ] Seed a clean demo dataset and a scripted happy-path walkthrough
-- [ ] README: architecture, the three seams, decisions + tradeoffs (esp. A-create/B-edit and sync-vs-async), and "what I'd do next" (real providers, multi-archetype, learning/compounding)
-- [ ] A few targeted tests around spec validation and the runtime sequence
-**Exit criteria**: Fresh clone → documented steps → full describe → generate → edit → run demo works.
+- [x] Break-testing pass: force invalid LLM output, provider failures, and a non-terminating edit request; verify each fails the way Phases 1–3 built it to (clean validation error, outcome branch, step cap + create-path fallback) — this phase verifies guards, it does not build them
+- [x] Seed a clean demo dataset and a scripted happy-path walkthrough (3 deterministic leads already seeded; walkthrough lives in the README)
+- [x] README: architecture, the three seams, decisions + tradeoffs (esp. A-create/B-edit and sync-vs-async), and "what I'd do next" (real providers, multi-archetype, learning/compounding)
+- [x] A few targeted tests around spec validation and the runtime sequence
+**Exit criteria** ✅: Fresh clone → documented steps → full describe → generate → edit → run demo works. (47 tests passing; 404s + full booked branch re-verified live; break-test guard paths covered by the new tests.)
 
 ## Build-Time Unknowns
 _Measurements to take during development, not design decisions:_
