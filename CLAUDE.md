@@ -7,7 +7,7 @@ Guidance for working in this repo. Read before making changes. Keep changes alig
 A two-agent voice AI assistant builder.
 
 1. **Builder** — a conversational meta-agent. The user describes the assistant they want in natural language; the Builder generates (and edits) a structured **Assistant Spec**.
-2. **Assistant** — the thing that gets built. It runs a per-lead sequence: **reach → qualify → book**, invoking tools to do so.
+2. **Assistant** — the thing that gets built and launched. The target experience is a live, spoken conversation the user has directly with it, invoking tools — **reach, qualify, book** — non-linearly based on what the conversation calls for. Delivered in stages: a scripted per-lead **reach → qualify → book** sequence ships first as the reliable spine (Phases 1–5), with the live voice layer and non-linear tool invocation following (Phase 6) once that spine is proven — see `docs/PLAN.md`.
 
 **Context:** This is a take-home for an AI-engineering role at Alta, a coordinated multi-agent GTM company. The assistant here is a scoped clone of Alta's voice/calling agent ("Alex"-style: runs voice conversations, scores intent, books meetings). The Builder is a second agent. Build in Alta's idiom: **coordinated agents sharing one context layer, that actually *act*.**
 
@@ -27,7 +27,7 @@ A two-agent voice AI assistant builder.
 - Whenever a non-trivial decision gets made or changed during the build — an architecture choice, a tradeoff, a deviation from `docs/PLAN.md`, a resolution of one of the three seams, something cut or deferred — append an entry to `docs/DECISIONS.md` in the same turn as the change, not as cleanup later.
 - Match the existing format: a short heading naming the decision, then 1–3 sentences on what was chosen and why (the tradeoff, not a feature description).
 - Skip it for routine implementation detail that doesn't reflect a choice — only log things a reviewer would otherwise have to ask "why did you do it this way?" about.
-- Never rewrite or delete a past entry to make it look like the final call was obvious in hindsight — append a new entry if a decision is later reversed, and say so.
+- Default: append a new entry if a decision is reversed, rather than rewriting the old one — this is how the log stays reliable for day-to-day work. Rewriting past entries is allowed when explicitly requested (e.g. reshaping the narrative for a submission).
 
 ## Stack
 
@@ -57,7 +57,7 @@ pytest
 | Assistant Spec | Config artifact: objective, behavior, allowed tools (Pydantic models) |
 | Spec Store | Persist / update specs (SQLite) |
 | Context Store ("Company Brain") | Shared state: leads, call outcomes, qualification, booked slots (SQLite) |
-| Runtime | Instantiate assistant from spec; drive reach → qualify → book; emit step events |
+| Runtime | Instantiate assistant from spec; drive reach → qualify → book; emit step events. Scripted/linear today (Phases 1–5); a live, non-linear agentic mode over real-time voice lands in Phase 6 |
 | Tool Registry | Open set of tools an assistant may invoke |
 | Provider Layer | Fulfills each tool; simulated now, real integrations later |
 | Event Stream | Stream live run progress to the frontend (SSE) |
@@ -92,9 +92,8 @@ These bake in the known failure modes — treat them as non-negotiable throughou
 
 ## Out of scope (do not build)
 
-- Real telephony/voice, calendar, or CRM integrations (seam is ready; simulated for the demo)
+- Live voice conversation + non-linear tool invocation (the target end state — staged as Phase 6, after the scripted spine and real providers)
 - Multiple live assistant archetypes in the demo (schema supports it; demo shows one)
-- Tools beyond reach / qualify / book (registry is open; only three registered)
 - Learning / compounding across runs
 - Auth, multi-user, Postgres, queue-based workers
 

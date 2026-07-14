@@ -2,6 +2,10 @@
 
 Short log of the key decisions made while scoping this assignment, and why. Full detail lives in `PLAN.md` (what/when) and `CLAUDE.md` (standing implementation rules).
 
+## Target architecture: live voice conversation, non-linear tool invocation
+
+The intended end state was never just a scripted per-lead sequence: the launched assistant should hold a real, spoken conversation with the user and invoke reach/qualify/book as the conversation calls for them ("set up my meeting" → `book` directly), not in a fixed order. That's a substantial build on its own — real-time speech in/out, an agentic tool-calling loop instead of a linear one — so it was staged rather than attempted all at once: Phases 1–5 deliver the scripted spine (structured spec, typed tool results, simulated-then-real providers) as the reliable foundation, and Phase 6 layers the live, non-linear voice experience on top once that spine holds. The three seams below (generic schema, open Tool Registry, swappable Providers) were chosen with this staging in mind — none of them assume a linear runtime, which is what keeps Phase 6 an addition rather than a rewrite.
+
 ## Handling assignment ambiguity
 
 The brief left three things open: whether the builder supports one assistant type or many, whether more tools exist beyond call/qualify/book, and whether calling/booking should be real integrations or simulated. Rather than guess, I designed three **seams** so the system doesn't need the answers to be built correctly:
@@ -136,3 +140,7 @@ Follow-up to the reorg above: `app/tools.py` had become *only* provider/registry
 ## What was deliberately left out (documented, not forgotten)
 
 Real telephony/calendar/CRM integrations, multiple live assistant archetypes in the demo, tools beyond the three registered, cross-run learning, auth/multi-user, and a production-grade queue/DB. Each is a natural next step once the platform proves out — all sit cleanly behind the seams above, so extending later doesn't require rearchitecting.
+
+## Real SDK wiring un-scoped: execute() now calls Twilio/HubSpot/Google Calendar for real (post-Phase 5)
+
+The "credential-gated stubs, not live integrations" entry above scoped every real provider's `execute()` as a `NotImplementedError` stub for the 3-day demo. That call is reversed here, at the user's request with budget available to actually exercise the integrations. Twilio and HubSpot are plain `httpx` REST calls (HTTP Basic Auth and a Bearer token respectively — no new dependency); Google Calendar adds one new dependency, `google-auth`, solely to mint a short-lived OAuth token from a service-account key file, since hand-rolling that signing would be a security anti-pattern. Two real-world ceilings are worth flagging: Twilio's outcome is `"initiated"`, not `"answered"`/`"no_answer"`, because that distinction only arrives later via a status-callback webhook this project doesn't implement (the Runtime treats any non-`no_answer` outcome as "continue," so this doesn't change branching); and HubSpot's `intent_score` is read from a portal-specific custom contact property, since real predictive lead scoring is a paid HubSpot feature not reachable via a plain API call, falling back to a fixed qualifying score when the property doesn't exist.

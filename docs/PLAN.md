@@ -6,7 +6,7 @@ Folded three edge cases (identified during Stage 3 stress-testing) directly into
 Post-review revision: boundary validation moved from Phase 4 into Phase 1 (guards ship with the feature, not as later hardening); the LLM repair attempt demoted to a stretch goal gated on measured invalid-output rate; edit-path fallback to whole-spec regeneration made an explicit Phase 3 task; Phase 4 reworded from building error handling to break-testing it.
 
 ## Context
-A platform with two coordinated agents. A conversational **Builder** turns a user's natural-language description into a structured **Assistant Specification**, and edits an existing spec the same way. A **Runtime** then instantiates an assistant from that spec and runs it through a per-lead sequence — reach → qualify → book — invoking **Tools** fulfilled by swappable **Providers**. Both agents read from and write to a shared **Context Store** (a small "Company Brain") so specs, lead data, and call outcomes accumulate in one place. The build is a 3-day take-home meant to demonstrate product judgment and a convincing end-to-end demo for an AI-engineering role at a multi-agent GTM company — not a production system. Assumed scale: single user, single machine, a handful of demo leads.
+A platform with two coordinated agents. A conversational **Builder** turns a user's natural-language description into a structured **Assistant Specification**, and edits an existing spec the same way. The target end state is a live, spoken conversation with the launched **Assistant**: the user talks to it directly, and it invokes **Tools** (reach / qualify / book, fulfilled by swappable **Providers**) non-linearly, based on what the conversation calls for ("set up my meeting"), rather than a fixed order. The 3-day build delivers this in stages: the scripted per-lead reach → qualify → book sequence ships first as the reliable spine, with the live two-way voice layer and non-linear tool invocation following once that spine is proven. Both agents read from and write to a shared **Context Store** (a small "Company Brain") so specs, lead data, and call outcomes accumulate in one place. The build is a take-home meant to demonstrate product judgment and a convincing end-to-end demo for an AI-engineering role at a multi-agent GTM company — not a production system. Assumed scale: single user, single machine, a handful of demo leads.
 
 ## Decisions Made
 - **Stack: Python / FastAPI, single service (monolith) + light frontend** — one language, one deploy, fastest path to a working demo; nothing here needs to be distributed.
@@ -74,8 +74,8 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 - [x] A few targeted tests around spec validation and the runtime sequence
 **Exit criteria** ✅: Fresh clone → documented steps → full describe → generate → edit → run demo works. (47 tests passing; 404s + full booked branch re-verified live; break-test guard paths covered by the new tests.)
 
-### Phase 5 — Per-tool selectable providers, user leads & sim_profile gating (post-take-home)
-**Deviation note**: this phase steps outside the original 3-day scope — real integrations and user-editable leads were listed under *Out of Scope*. Logged in DECISIONS. **Hard constraint**: the simulated providers and the three seeded demo leads stay and remain the **default** — the test suite depends on them (`test_tools.py`, `test_store.py::test_seed_leads_creates_one_per_sim_profile`, `test_runtime.py`), and keeping simulated-default means CI and a cold demo never need live credentials. Everything below is **additive**, not a replacement.
+### Phase 5 — Per-tool selectable providers, user leads & sim_profile gating
+**Staged delivery note**: real integrations and user-editable leads were always the target (see Context); this phase is where they land, once the scripted spine from Phases 1–4 was proven stable. Logged in DECISIONS. **Hard constraint**: the simulated providers and the three seeded demo leads stay and remain the **default** — the test suite depends on them (`test_tools.py`, `test_store.py::test_seed_leads_creates_one_per_sim_profile`, `test_runtime.py`), and keeping simulated-default means CI and a cold demo never need live credentials. Everything below is **additive**, not a replacement.
 
 **Goal**: An assistant can run against real telephony/CRM/calendar integrations and against user-added leads, without breaking the simulated demo path or the tests.
 
@@ -86,6 +86,15 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 
 **Exit criteria** ✅: All 47 tests stay green unchanged and the cold demo runs credential-free on the simulated default; picking a real provider without its env vars returns a clean 400 and creates no run (verified end-to-end: `Twilio Voice needs TWILIO_ACCOUNT_SID`, run count unchanged); a user-added lead with no `sim_profile` persists as `null`.
 
+### Phase 6 — Live voice conversation & non-linear tool invocation
+**Goal**: The end state described in Context — the user talks to a launched assistant directly (real speech in/out), and the assistant invokes reach / qualify / book non-linearly based on what the conversation calls for, rather than the fixed Phase 2 sequence.
+**Tasks**:
+- [ ] Real-time audio pipeline: speech-to-text in, text-to-speech out, wired to a live session
+- [ ] Agentic tool-calling loop over the conversation (replaces the linear `Runtime` for this mode): the model decides which registered tool to invoke and when, from open-ended user speech (e.g. "set up my meeting" → `book` directly)
+- [ ] Reconcile with the existing linear `Runtime`: either a second execution mode alongside it, or a generalization that covers both — decide once the agentic loop's shape is concrete
+- [ ] Frontend: live voice UI (mic capture, playback, turn-taking) in the session view
+**Status**: planned; not yet started. Picks up in the next working session against the real Twilio/HubSpot/Google Calendar providers wired in Phase 5.
+
 ## Build-Time Unknowns
 _Measurements taken during development, not design decisions. Measured via `scripts/measure/measure_unknowns.py` against `claude-sonnet-5`._
 - **Invalid-output rate of whole-spec generation — measured 0/8 (0%).** ✅ All descriptions (incl. two adversarial/off-topic) produced schema-valid specs; the boundary guard never had to fire. **Decision: the stretch-goal repair attempt is not warranted** — clean-fail + validation is enough (see DECISIONS).
@@ -93,9 +102,8 @@ _Measurements taken during development, not design decisions. Measured via `scri
 - **Streamed step latency — resolved by construction, no measurement needed.** ✅ The run loop has no LLM in it; every step is a fixed 0.5s provider sleep, so pacing is deterministic and reads as "live" without any deliberate pacing added.
 
 ## Out of Scope (for now)
-- Real telephony/voice, calendar, and CRM integrations — provider seam is ready; simulated for the demo (pending answer to Q3)
+- Live voice conversation + non-linear tool invocation — the target end state (see Context); staged as Phase 6, after the scripted spine and real providers landed first
 - Multiple live assistant archetypes in the demo — schema supports it; demo shows one (pending answer to Q1)
-- Tools beyond reach / qualify / book — registry is open; only three registered (pending answer to Q2)
 - Learning / compounding across runs (the "gets smarter" loop)
 - Auth, multi-user, Postgres, queue-based workers
-- Agent frameworks (LangGraph / LangChain) — considered and rejected: the edit loop is a bounded `while` over the Anthropic SDK with an iteration cap and error-feedback recovery (~40–60 lines we control and can explain in review). A framework would hide exactly the judgment the loop is meant to demonstrate, and add version churn and demo-time failure modes for orchestration this scope doesn't need. The registry seam keeps LangGraph a clean later swap if branching/durable runs ever warrant it.
+- A committed orchestration framework for Phase 6 — the Phase 3 edit loop deliberately stayed a bounded `while` over the Anthropic SDK (not LangGraph/LangChain) so the iteration-cap-and-recovery judgment was ours to show in review; Phase 6's agentic tool-calling loop may reuse that pattern or reach for a graph-based framework (e.g. LangGraph) if the non-linear branching outgrows a hand-rolled loop — decided when that phase starts, not before.
