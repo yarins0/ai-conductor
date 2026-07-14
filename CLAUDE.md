@@ -43,7 +43,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # run backend (dev)
-uvicorn app.main:app --reload
+python -m app.main
 
 # run tests
 pytest

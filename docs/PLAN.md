@@ -38,11 +38,11 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 ### Phase 1 — Foundation (spec + create path)
 **Goal**: A user can describe an assistant in chat and get a validated, persisted spec.
 **Tasks**:
-- [ ] Define Assistant Spec Pydantic models (objective, behavior, open `tools` list); export JSON Schema
-- [ ] Stand up FastAPI service + SQLite/SQLModel; Spec Store CRUD
-- [ ] Builder *create* path: LLM structured output constrained to the schema; validate at the boundary — persist on success, fail cleanly with a clear message on invalid output (a one-shot repair attempt — feed the validation error back once — is a stretch goal, added only if the invalid-output rate warrants it)
-- [ ] Minimal frontend: Builder chat panel that creates a spec and displays it
-**Exit criteria**: Describe an assistant in natural language → a schema-valid spec is saved and visible.
+- [x] Define Assistant Spec Pydantic models (objective, behavior, open `tools` list); export JSON Schema
+- [x] Stand up FastAPI service + SQLite/SQLModel; Spec Store CRUD
+- [x] Builder *create* path: LLM structured output constrained to the schema; validate at the boundary — persist on success, fail cleanly with a clear message on invalid output (a one-shot repair attempt — feed the validation error back once — is a stretch goal, added only if the invalid-output rate warrants it)
+- [x] Minimal frontend: Builder chat panel that creates a spec and displays it
+**Exit criteria**: Describe an assistant in natural language → a schema-valid spec is saved and visible. ✅ Verified live (real Claude call → schema-valid spec persisted and listed).
 
 ### Phase 2 — Runtime, tools & shared context (the actions)
 **Goal**: A saved assistant can run end-to-end against a lead, with outcomes written back to the Company Brain.
@@ -86,3 +86,4 @@ _Measurements to take during development, not design decisions:_
 - Tools beyond reach / qualify / book — registry is open; only three registered (pending answer to Q2)
 - Learning / compounding across runs (the "gets smarter" loop)
 - Auth, multi-user, Postgres, queue-based workers
+- Agent frameworks (LangGraph / LangChain) — considered and rejected: the edit loop is a bounded `while` over the Anthropic SDK with an iteration cap and error-feedback recovery (~40–60 lines we control and can explain in review). A framework would hide exactly the judgment the loop is meant to demonstrate, and add version churn and demo-time failure modes for orchestration this scope doesn't need. The registry seam keeps LangGraph a clean later swap if branching/durable runs ever warrant it.

@@ -1,9 +1,10 @@
 """FastAPI service: Builder API + static frontend.
 
-Run with: uvicorn app.main:app --reload
+Run with: python -m app.main
 """
 
 import json
+import os
 from contextlib import asynccontextmanager
 
 import anthropic
@@ -77,3 +78,11 @@ def serve_frontend() -> FileResponse:
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # 8123 default: port 8000 hits WinError 10013 (reserved/blocked) on some
+    # Windows setups. Override with the PORT env var if 8123 is also taken.
+    uvicorn.run("app.main:app", port=int(os.getenv("PORT", "8123")), reload=True)
