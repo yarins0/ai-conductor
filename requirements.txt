@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+anthropic
+python-dotenv
+pytest
+httpx
