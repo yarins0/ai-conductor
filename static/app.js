@@ -15,8 +15,8 @@ function el(tag, props, children) {
 const specListEl = document.getElementById("specList");
 const logEl = document.getElementById("log");
 const inputEl = document.getElementById("input");
-const createBtn = document.getElementById("createBtn");
-const editBtn = document.getElementById("editBtn");
+const actionBtn = document.getElementById("actionBtn");
+const newAssistantBtn = document.getElementById("newAssistantBtn");
 const leadSelectEl = document.getElementById("leadSelect");
 const runBtn = document.getElementById("runBtn");
 const reconnectBtn = document.getElementById("reconnectBtn");
@@ -29,11 +29,31 @@ let activeSpecId = null;
 let currentEventSource = null;
 let lastRun = null;  // { runId, leadId } — lets the Reconnect button reopen the stream
 
-// Run and Edit both need an active spec; Run also needs at least one lead.
-function syncSpecControls() {
+// The single composer button is mode-aware: with no active spec it creates a new
+// one; with a spec active (freshly created or picked from the sidebar) it edits
+// that one. Run also needs at least one lead.
+function syncControls() {
   const hasSpec = activeSpecId !== null;
-  editBtn.disabled = !hasSpec;
+  actionBtn.textContent = hasSpec ? "Edit" : "Create";
+  actionBtn.classList.toggle("editing", hasSpec);
   runBtn.disabled = !hasSpec || leads.length === 0;
+}
+
+// Dispatch the one composer button by mode.
+function handleAction() {
+  if (activeSpecId === null) handleCreate();
+  else handleEdit();
+}
+
+// Reset to a blank conversation: deselect any spec, clear the log, drop back to
+// Create mode. Does not touch the live session panel.
+function startNewChat() {
+  activeSpecId = null;
+  logEl.textContent = "";
+  logEl.appendChild(el("div", { className: "empty-hint", id: "emptyHint" }, ["Describe the assistant you want and hit Create to get started."]));
+  renderSidebar();
+  syncControls();
+  inputEl.focus();
 }
 
 async function loadSpecs() {
@@ -108,13 +128,13 @@ function showSpecCard(entry, fromCreate) {
     renderSidebar();
     logEl.textContent = "";
   }
-  syncSpecControls();
+  syncControls();
   logEl.appendChild(buildSpecCard(entry.spec));
   logEl.scrollTop = logEl.scrollHeight;
 }
 
 function setLoading(isLoading) {
-  createBtn.disabled = isLoading;
+  actionBtn.disabled = isLoading;
   inputEl.disabled = isLoading;
   let loadingEl = document.getElementById("loadingMsg");
   if (isLoading) {
@@ -199,7 +219,7 @@ async function loadLeads() {
     leads = [];
   }
   renderLeadSelect();
-  syncSpecControls();
+  syncControls();
 }
 
 function renderLeadSelect() {
@@ -299,8 +319,8 @@ async function showOutcome(leadId, runStatus) {
   }
 }
 
-createBtn.addEventListener("click", handleCreate);
-editBtn.addEventListener("click", handleEdit);
+actionBtn.addEventListener("click", handleAction);
+newAssistantBtn.addEventListener("click", startNewChat);
 runBtn.addEventListener("click", handleRun);
 reconnectBtn.addEventListener("click", () => {
   if (lastRun) openRunStream(lastRun.runId, lastRun.leadId);
@@ -308,9 +328,23 @@ reconnectBtn.addEventListener("click", () => {
 inputEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
-    handleCreate();
+    handleAction();
   }
 });
+
+// Collapse/expand the two side panels. Toggling `collapsed` shrinks the panel to
+// a thin strip (CSS-driven); the chevron flips to point the way it will open.
+function wirePanelToggle(toggleId, panelId, collapsedChar, expandedChar) {
+  const toggle = document.getElementById(toggleId);
+  const panel = document.getElementById(panelId);
+  toggle.addEventListener("click", () => {
+    const isCollapsed = panel.classList.toggle("collapsed");
+    toggle.textContent = isCollapsed ? collapsedChar : expandedChar;
+    toggle.title = isCollapsed ? "Expand" : "Collapse";
+  });
+}
+wirePanelToggle("sidebarToggle", "sidebar", "›", "‹");
+wirePanelToggle("sessionToggle", "session", "‹", "›");
 
 logEl.appendChild(el("div", { className: "empty-hint", id: "emptyHint" }, ["Describe the assistant you want and hit Create to get started."]));
 stepsEl.appendChild(el("div", { className: "session-hint" }, ["Pick a lead and Run an assistant to watch it work."]));

@@ -35,7 +35,33 @@
     padding: 16px;
     overflow-y: auto;
   }
-  #sidebar h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  #sidebar h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; }
+
+  /* Collapsible side panels: a header row holds the title + a chevron toggle.
+     Collapsing swaps a .collapsed class that shrinks the panel to a thin strip
+     and hides everything but the toggle. */
+  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .panel-toggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .panel-toggle:hover { color: var(--text); border-color: var(--accent); }
+  #sidebar.collapsed, #session.collapsed { width: 44px; padding-left: 10px; padding-right: 10px; overflow: hidden; }
+  #sidebar.collapsed > *:not(.panel-head), #session.collapsed > *:not(.panel-head) { display: none; }
+  #sidebar.collapsed .panel-head h2, #session.collapsed .panel-head h2 { display: none; }
+  #sidebar.collapsed .panel-head, #session.collapsed .panel-head { justify-content: center; }
   .spec-item {
     padding: 10px 12px;
     border-radius: 8px;
@@ -47,6 +73,20 @@
   .spec-item .name { font-size: 14px; font-weight: 600; }
   .spec-item .date { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .empty-hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  /* Dashed outline reads as "add"; stays quiet so the composer keeps the one filled primary. */
+  .new-assistant-btn {
+    width: 100%;
+    background: transparent;
+    color: var(--accent);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 16px;
+  }
+  .new-assistant-btn:hover { border-color: var(--accent); background: var(--panel); }
 
   /* Main pane */
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -148,7 +188,8 @@
     cursor: pointer;
   }
   #composer button:disabled { opacity: .5; cursor: not-allowed; }
-  #editBtn { background: var(--panel); border: 1px solid var(--accent); color: var(--accent); }
+  /* Edit mode swaps the filled primary for an accent outline — the color reinforces the mode alongside the label. */
+  #actionBtn.editing { background: var(--panel); border: 1px solid var(--accent); color: var(--accent); }
 
   /* Session panel (right column) */
   #session {
@@ -160,10 +201,13 @@
     padding: 16px;
     overflow-y: auto;
   }
-  #session h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  #session h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; }
   #runControls { display: flex; gap: 8px; margin-bottom: 8px; }
   #leadSelect {
     flex: 1;
+    /* min-width:0 lets the flex item shrink below its long option text so the
+       panel doesn't overflow horizontally; the native select truncates instead. */
+    min-width: 0;
     background: var(--panel);
     border: 1px solid var(--border);
     color: var(--text);
@@ -221,7 +265,11 @@
 </style>
 
 <div id="sidebar">
-  <h2>Saved assistants</h2>
+  <div class="panel-head">
+    <h2>Saved assistants</h2>
+    <button class="panel-toggle" id="sidebarToggle" title="Collapse" aria-label="Collapse panel">‹</button>
+  </div>
+  <button id="newAssistantBtn" class="new-assistant-btn">+ New assistant</button>
   <div id="specList"></div>
 </div>
 
@@ -230,13 +278,15 @@
   <div id="log"></div>
   <div id="composer">
     <textarea id="input" placeholder="Describe the assistant you want…" rows="1"></textarea>
-    <button id="createBtn">Create</button>
-    <button id="editBtn" disabled>Edit</button>
+    <button id="actionBtn">Create</button>
   </div>
 </div>
 
 <div id="session">
-  <h2>Live session</h2>
+  <div class="panel-head">
+    <h2>Live session</h2>
+    <button class="panel-toggle" id="sessionToggle" title="Collapse" aria-label="Collapse panel">›</button>
+  </div>
   <div id="runControls">
     <select id="leadSelect"></select>
     <button id="runBtn" disabled>Run</button>
