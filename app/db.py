@@ -27,8 +27,42 @@ class SpecRecord(SQLModel, table=True):
     updated_at: datetime
 
 
+class LeadRecord(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    company: str
+    phone: str
+    # Lifecycle: "new" -> "unreachable" | "not_qualified" | "booked"
+    status: str = "new"
+    intent_score: int | None = None
+    booked_slot: str | None = None
+    # Drives the deterministic simulated providers: "books" | "no_answer" | "not_qualified".
+    # Deterministic (not random) so the demo reliably exercises every branch.
+    sim_profile: str = "books"
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunRecord(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    spec_id: int
+    lead_id: int
+    status: str = "running"  # "running" -> "completed" | "failed"
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunStepRecord(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int
+    tool: str
+    result_json: str  # serialized ToolResult
+    created_at: datetime
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    seed_leads()  # demo needs inspectable leads on first boot; idempotent so restarts don't duplicate
 
 
 def save_spec(spec: AssistantSpec) -> SpecRecord:
@@ -59,3 +93,144 @@ def list_specs() -> list[SpecRecord]:
             SpecRecord.created_at.desc(), SpecRecord.id.desc()
         )
         return list(session.exec(statement))
+
+
+def get_lead(lead_id: int) -> LeadRecord | None:
+    with Session(engine) as session:
+        return session.get(LeadRecord, lead_id)
+
+
+def list_leads() -> list[LeadRecord]:
+    with Session(engine) as session:
+        statement = select(LeadRecord).order_by(
+            LeadRecord.created_at.desc(), LeadRecord.id.desc()
+        )
+        return list(session.exec(statement))
+
+
+def update_lead_outcome(
+    lead_id: int,
+    status: str,
+    intent_score: int | None = None,
+    booked_slot: str | None = None,
+) -> LeadRecord | None:
+    with Session(engine) as session:
+        lead = session.get(LeadRecord, lead_id)
+        if lead is None:
+            return None
+        lead.status = status
+        # Only overwrite when a value is actually provided — a later status-only
+        # update (e.g. marking unreachable) must not clobber an earlier score.
+        if intent_score is not None:
+            lead.intent_score = intent_score
+        if booked_slot is not None:
+            lead.booked_slot = booked_slot
+        lead.updated_at = datetime.now(timezone.utc)
+        session.add(lead)
+        session.commit()
+        session.refresh(lead)
+        return lead
+
+
+def create_run(spec_id: int, lead_id: int) -> RunRecord:
+    now = datetime.now(timezone.utc)
+    record = RunRecord(
+        spec_id=spec_id,
+        lead_id=lead_id,
+        status="running",
+        created_at=now,
+        updated_at=now,
+    )
+    with Session(engine) as session:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+
+
+def get_run(run_id: int) -> RunRecord | None:
+    with Session(engine) as session:
+        return session.get(RunRecord, run_id)
+
+
+def list_runs() -> list[RunRecord]:
+    with Session(engine) as session:
+        statement = select(RunRecord).order_by(
+            RunRecord.created_at.desc(), RunRecord.id.desc()
+        )
+        return list(session.exec(statement))
+
+
+def finish_run(run_id: int, status: str) -> RunRecord | None:
+    with Session(engine) as session:
+        run = session.get(RunRecord, run_id)
+        if run is None:
+            return None
+        run.status = status
+        run.updated_at = datetime.now(timezone.utc)
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run
+
+
+def add_run_step(run_id: int, tool: str, result_json: str) -> RunStepRecord:
+    # Appended as each step completes — this is how a poll or SSE reconnect
+    # rebuilds a live run; run state must never live only in the stream.
+    record = RunStepRecord(
+        run_id=run_id,
+        tool=tool,
+        result_json=result_json,
+        created_at=datetime.now(timezone.utc),
+    )
+    with Session(engine) as session:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+
+
+def list_run_steps(run_id: int) -> list[RunStepRecord]:
+    with Session(engine) as session:
+        # ASC by id: execution order, not recency
+        statement = (
+            select(RunStepRecord)
+            .where(RunStepRecord.run_id == run_id)
+            .order_by(RunStepRecord.id.asc())
+        )
+        return list(session.exec(statement))
+
+
+def seed_leads() -> None:
+    with Session(engine) as session:
+        if session.exec(select(LeadRecord)).first() is not None:
+            return  # idempotent: don't duplicate seed data on restart
+        now = datetime.now(timezone.utc)
+        demo_leads = [
+            LeadRecord(
+                name="Dana Reyes",
+                company="Northwind Analytics",
+                phone="+1-555-0142",
+                sim_profile="books",
+                created_at=now,
+                updated_at=now,
+            ),
+            LeadRecord(
+                name="Marcus Chen",
+                company="Fieldstone Logistics",
+                phone="+1-555-0198",
+                sim_profile="no_answer",
+                created_at=now,
+                updated_at=now,
+            ),
+            LeadRecord(
+                name="Priya Nair",
+                company="Havenlight CRM",
+                phone="+1-555-0173",
+                sim_profile="not_qualified",
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+        session.add_all(demo_leads)
+        session.commit()

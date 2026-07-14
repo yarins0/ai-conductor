@@ -47,13 +47,13 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 ### Phase 2 — Runtime, tools & shared context (the actions)
 **Goal**: A saved assistant can run end-to-end against a lead, with outcomes written back to the Company Brain.
 **Tasks**:
-- [ ] Tool Registry + Provider Layer interfaces; simulated providers for reach / qualify / book
-- [ ] Each tool returns a typed result (success / failure / outcome); Runtime branches on it rather than assuming success (e.g. "no answer" is a normal outcome, not a crash)
-- [ ] Runtime orchestrator: reach → qualify → book, driven by the spec's tool list
-- [ ] Context Store: seed demo leads; write call outcomes, intent/qualification, booked slot back after every run
-- [ ] Explicit not-found handling for missing spec/lead lookups (clean error, never a 500)
-- [ ] Name real drop-ins in code comments/README (telephony, calendar, CRM adapters)
-**Exit criteria**: Trigger a run for a lead → the sequence executes (including a simulated failure branch) and outcomes persist and are inspectable.
+- [x] Tool Registry + Provider Layer interfaces; simulated providers for reach / qualify / book
+- [x] Each tool returns a typed result (success / failure / outcome); Runtime branches on it rather than assuming success (e.g. "no answer" is a normal outcome, not a crash)
+- [x] Runtime orchestrator: reach → qualify → book, driven by the spec's tool list
+- [x] Context Store: seed demo leads; write call outcomes, intent/qualification, booked slot back after every run
+- [x] Explicit not-found handling for missing spec/lead lookups (clean error, never a 500)
+- [x] Name real drop-ins in code comments/README (telephony, calendar, CRM adapters)
+**Exit criteria** ✅: Trigger a run for a lead → the sequence executes (including a simulated failure branch) and outcomes persist and are inspectable.
 
 ### Phase 3 — Live experience + edit path (the flex)
 **Goal**: The demo feels alive, and assistants can be edited by chatting.

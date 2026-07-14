@@ -46,3 +46,74 @@ def test_generate_spec_invalid_llm_output_returns_422(client, monkeypatch):
 def test_get_missing_spec_returns_404(client):
     response = client.get("/api/specs/999999")
     assert response.status_code == 404
+
+
+async def _noop_execute_run(run_id, spec, lead):
+    pass
+
+
+def _first_lead_id() -> int:
+    return db.list_leads()[0].id
+
+
+def test_create_run_returns_202_and_run_record(client, monkeypatch):
+    monkeypatch.setattr(main.runtime, "execute_run", _noop_execute_run)
+    spec_record = db.save_spec(SAMPLE_SPEC)
+    lead_id = _first_lead_id()
+
+    response = client.post("/api/runs", json={"spec_id": spec_record.id, "lead_id": lead_id})
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["spec_id"] == spec_record.id
+    assert body["lead_id"] == lead_id
+    assert body["status"] == "running"
+
+
+def test_create_run_missing_spec_returns_404(client, monkeypatch):
+    monkeypatch.setattr(main.runtime, "execute_run", _noop_execute_run)
+    lead_id = _first_lead_id()
+
+    response = client.post("/api/runs", json={"spec_id": 999999, "lead_id": lead_id})
+
+    assert response.status_code == 404
+
+
+def test_create_run_missing_lead_returns_404(client, monkeypatch):
+    monkeypatch.setattr(main.runtime, "execute_run", _noop_execute_run)
+    spec_record = db.save_spec(SAMPLE_SPEC)
+
+    response = client.post("/api/runs", json={"spec_id": spec_record.id, "lead_id": 999999})
+
+    assert response.status_code == 404
+
+
+def test_get_missing_run_returns_404(client):
+    response = client.get("/api/runs/999999")
+    assert response.status_code == 404
+
+
+def test_get_run_returns_run_and_steps(client):
+    spec_record = db.save_spec(SAMPLE_SPEC)
+    lead_id = _first_lead_id()
+    run = db.create_run(spec_id=spec_record.id, lead_id=lead_id)
+    db.add_run_step(run.id, "reach", '{"tool": "reach", "status": "ok", "outcome": "answered", "summary": "ok", "data": {}}')
+
+    response = client.get(f"/api/runs/{run.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["id"] == run.id
+    assert len(body["steps"]) == 1
+    assert body["steps"][0]["tool"] == "reach"
+
+
+def test_list_leads_returns_seeded_leads(client):
+    response = client.get("/api/leads")
+    assert response.status_code == 200
+    assert len(response.json()) == 3
+
+
+def test_get_missing_lead_returns_404(client):
+    response = client.get("/api/leads/999999")
+    assert response.status_code == 404
