@@ -95,6 +95,22 @@ def list_specs() -> list[SpecRecord]:
         return list(session.exec(statement))
 
 
+def update_spec(spec_id: int, spec: AssistantSpec) -> SpecRecord | None:
+    # Last-write-wins (rule #6): concurrent edits at this scale don't need locking.
+    # None on missing — caller maps to 404; never raise here.
+    with Session(engine) as session:
+        record = session.get(SpecRecord, spec_id)
+        if record is None:
+            return None
+        record.name = spec.name
+        record.spec_json = spec.model_dump_json()
+        record.updated_at = datetime.now(timezone.utc)
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+
+
 def get_lead(lead_id: int) -> LeadRecord | None:
     with Session(engine) as session:
         return session.get(LeadRecord, lead_id)

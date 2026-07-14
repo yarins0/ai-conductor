@@ -58,12 +58,12 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 ### Phase 3 — Live experience + edit path (the flex)
 **Goal**: The demo feels alive, and assistants can be edited by chatting.
 **Tasks**:
-- [ ] SSE streaming of each run step to a live session view (with artificial pacing if needed)
-- [ ] Persist run state to the Context Store as each step completes, so the session view can rebuild from storage on stream drop/reconnect rather than relying on the stream alone
-- [ ] Builder *edit* path: tool-calling agent loop (`set_objective`, `add_tool`, `update_field`, …) with a hard step cap and error-feedback recovery on invalid tool arguments
-- [ ] Edit fallback: if the agent loop fails (cap hit or unrecoverable), regenerate the whole spec via the create path — the edit demo must never dead-end
-- [ ] Frontend: live session view showing step-by-step progress and final outcomes
-**Exit criteria**: Edit an existing assistant via chat *and* watch a run stream step-by-step to completion, surviving a simulated reconnect.
+- [x] SSE streaming of each run step to a live session view (`GET /api/runs/{id}/stream`; simulated providers' 0.5s step delay gives the live pacing — no artificial pacing added)
+- [x] Persist run state to the Context Store as each step completes, so the session view can rebuild from storage on stream drop/reconnect rather than relying on the stream alone (already satisfied in Phase 2; the stream replays persisted rows on every connect)
+- [x] Builder *edit* path: tool-calling agent loop (`set_objective`, `set_persona`, `set_name`, `add_tool`, `remove_tool`, `set_instructions`, `finish`) with a hard step cap (`MAX_EDIT_ITERATIONS = 8`) and error-feedback recovery on invalid tool arguments
+- [x] Edit fallback: if the agent loop fails (cap hit, invalid final spec, or LLM error), regenerate the whole spec via the create path — the edit demo never dead-ends
+- [x] Frontend: right-hand Session panel with lead picker + Run, live step stream, reconnect control, and final lead outcome badge
+**Exit criteria** ✅: Edit an existing assistant via chat *and* watch a run stream step-by-step to completion, surviving a simulated reconnect. (SSE live/replay/branching/404 verified live via curl; edit loop covered by stubbed unit tests — normal edit, invalid-arg recovery, cap→fallback.)
 
 ### Phase 4 — Hardening & Launch
 **Goal**: Robust enough to demo cold, and legible to a reviewer.

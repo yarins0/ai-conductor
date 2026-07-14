@@ -6,14 +6,22 @@ Run with: python -m app.main
 import asyncio
 import json
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# SSE tuning: poll cadence for new run steps and a safety cap so a run that
+# never reaches a terminal status can't stream forever (runs always call
+# finish_run, so the cap is a guard, not the normal exit).
+STREAM_POLL_SECONDS = 0.3
+MAX_STREAM_POLLS = 200
+TERMINAL_RUN_STATUSES = ("completed", "failed")
 
 # Load ANTHROPIC_API_KEY (and optional AI_CONDUCTOR_DB) before app modules
 # read the environment at import time.
@@ -41,6 +49,10 @@ class GenerateSpecRequest(BaseModel):
 class RunRequest(BaseModel):
     spec_id: int
     lead_id: int
+
+
+class EditSpecRequest(BaseModel):
+    instruction: str
 
 
 def spec_record_to_response(record: db.SpecRecord) -> dict:
@@ -104,6 +116,26 @@ def get_spec(spec_id: int) -> dict:
     return spec_record_to_response(record)
 
 
+@app.post("/api/specs/{spec_id}/edit")
+def edit_spec(spec_id: int, request: EditSpecRequest) -> dict:
+    spec_record = db.get_spec(spec_id)
+    if spec_record is None:
+        raise HTTPException(status_code=404, detail=f"No spec with id {spec_id}.")
+    current = AssistantSpec.model_validate_json(spec_record.spec_json)
+    try:
+        # The edit loop self-corrects on bad tool args and falls back to whole-spec
+        # regeneration internally, so it returns a valid spec or raises cleanly.
+        edited = builder.edit_spec(current, request.instruction)
+    except builder.BuilderError as builder_error:
+        raise HTTPException(status_code=422, detail=str(builder_error))
+    except anthropic.APIError as api_error:
+        raise HTTPException(
+            status_code=502, detail=f"The Builder's LLM call failed: {api_error.message}"
+        )
+    updated = db.update_spec(spec_id, edited)
+    return spec_record_to_response(updated)
+
+
 @app.post("/api/runs", status_code=202)
 async def create_run(request: RunRequest) -> dict:
     spec_record = db.get_spec(request.spec_id)
@@ -140,6 +172,53 @@ def get_run(run_id: int) -> dict:
         for step in db.list_run_steps(run_id)
     ]
     return {"run": run_record_to_response(record), "steps": steps}
+
+
+def _step_event(step: db.RunStepRecord) -> str:
+    payload = {
+        "type": "step",
+        "tool": step.tool,
+        "result": json.loads(step.result_json),
+        "created_at": step.created_at.isoformat(),
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+async def _run_step_stream(run_id: int) -> AsyncIterator[str]:
+    # Every connection replays all persisted steps first (emitted starts at 0),
+    # so a reconnect rebuilds the whole view from durable rows — the stream is a
+    # push layer over durable state, never the source of truth (rule #5).
+    emitted = 0
+    for _ in range(MAX_STREAM_POLLS):
+        steps = db.list_run_steps(run_id)
+        for step in steps[emitted:]:
+            yield _step_event(step)
+        emitted = len(steps)
+
+        # ponytail: sync db reads inside the async generator briefly touch the
+        # event loop each poll — fine at single-user scale; no async db needed.
+        run = db.get_run(run_id)
+        if run is not None and run.status in TERMINAL_RUN_STATUSES:
+            yield f"data: {json.dumps({'type': 'done', 'status': run.status})}\n\n"
+            return
+
+        await asyncio.sleep(STREAM_POLL_SECONDS)
+
+    final = db.get_run(run_id)
+    status = final.status if final is not None else "failed"
+    yield f"data: {json.dumps({'type': 'done', 'status': status})}\n\n"
+
+
+@app.get("/api/runs/{run_id}/stream")
+async def stream_run(run_id: int) -> StreamingResponse:
+    # 404 before streaming starts, so a bad id is a clean error not a dead stream.
+    if db.get_run(run_id) is None:
+        raise HTTPException(status_code=404, detail=f"No run with id {run_id}.")
+    return StreamingResponse(
+        _run_step_stream(run_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/leads")

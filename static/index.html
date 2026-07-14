@@ -148,6 +148,76 @@
     cursor: pointer;
   }
   #composer button:disabled { opacity: .5; cursor: not-allowed; }
+  #editBtn { background: var(--panel); border: 1px solid var(--accent); color: var(--accent); }
+
+  /* Session panel (right column) */
+  #session {
+    width: 340px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    overflow-y: auto;
+  }
+  #session h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  #runControls { display: flex; gap: 8px; margin-bottom: 8px; }
+  #leadSelect {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
+  #session button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #session button:disabled { opacity: .5; cursor: not-allowed; }
+  #reconnectBtn { background: var(--panel); border: 1px solid var(--border); color: var(--muted); width: 100%; margin-bottom: 12px; }
+  #steps { display: flex; flex-direction: column; gap: 8px; }
+  .step-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .step-card .step-head { display: flex; align-items: center; gap: 8px; }
+  .step-card .step-tool { font-weight: 600; font-size: 14px; }
+  .step-card .step-outcome {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--accent);
+    border: 1px solid rgba(91, 140, 255, .3);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+  .step-card .step-summary { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  #outcome { margin-top: 14px; }
+  .outcome-badge {
+    display: inline-block;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: .03em;
+    border-radius: 8px;
+    padding: 6px 12px;
+  }
+  .outcome-booked { background: rgba(74, 222, 128, .15); color: #4ade80; border: 1px solid rgba(74, 222, 128, .35); }
+  .outcome-not_qualified { background: rgba(251, 191, 36, .15); color: #fbbf24; border: 1px solid rgba(251, 191, 36, .35); }
+  .outcome-unreachable { background: rgba(255, 107, 107, .12); color: var(--danger); border: 1px solid rgba(255, 107, 107, .3); }
+  .outcome-line { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .session-hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .session-error { color: var(--danger); font-size: 13px; }
 </style>
 
 <div id="sidebar">
@@ -161,160 +231,19 @@
   <div id="composer">
     <textarea id="input" placeholder="Describe the assistant you want…" rows="1"></textarea>
     <button id="createBtn">Create</button>
+    <button id="editBtn" disabled>Edit</button>
   </div>
 </div>
 
-<script>
-  // Minimal DOM builder — cuts repetitive createElement/setAttribute calls below.
-  function el(tag, props, children) {
-    const node = document.createElement(tag);
-    Object.entries(props || {}).forEach(([key, value]) => {
-      if (key === "className") node.className = value;
-      else if (key === "onclick") node.addEventListener("click", value);
-      else node.setAttribute(key, value);
-    });
-    (children || []).forEach((child) => {
-      node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
-    });
-    return node;
-  }
+<div id="session">
+  <h2>Live session</h2>
+  <div id="runControls">
+    <select id="leadSelect"></select>
+    <button id="runBtn" disabled>Run</button>
+  </div>
+  <button id="reconnectBtn" disabled>Reconnect stream</button>
+  <div id="steps"></div>
+  <div id="outcome"></div>
+</div>
 
-  const specListEl = document.getElementById("specList");
-  const logEl = document.getElementById("log");
-  const inputEl = document.getElementById("input");
-  const createBtn = document.getElementById("createBtn");
-
-  let specs = [];
-  let activeSpecId = null;
-
-  async function loadSpecs() {
-    try {
-      const res = await fetch("/api/specs");
-      specs = res.ok ? await res.json() : [];
-    } catch {
-      specs = [];
-    }
-    renderSidebar();
-  }
-
-  function renderSidebar() {
-    specListEl.textContent = "";
-    if (specs.length === 0) {
-      specListEl.appendChild(el("div", { className: "empty-hint" }, ["No assistants yet — create one to get started."]));
-      return;
-    }
-    specs.forEach((spec) => {
-      const item = el("div", {
-        className: "spec-item" + (spec.id === activeSpecId ? " active" : ""),
-        onclick: () => showSpecCard(spec, false),
-      }, [
-        el("div", { className: "name" }, [spec.name]),
-        el("div", { className: "date" }, [new Date(spec.created_at).toLocaleString()]),
-      ]);
-      specListEl.appendChild(item);
-    });
-  }
-
-  function appendUserMessage(text) {
-    document.getElementById("emptyHint")?.remove();
-    logEl.appendChild(el("div", { className: "msg-user" }, [text]));
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  function appendError(message) {
-    logEl.appendChild(el("div", { className: "msg-error" }, [message]));
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  function buildSpecCard(spec) {
-    const card = el("div", { className: "spec-card" });
-    card.appendChild(el("h3", {}, [spec.name]));
-    card.appendChild(el("div", { className: "objective" }, [spec.objective]));
-
-    card.appendChild(el("div", { className: "label" }, ["Persona"]));
-    card.appendChild(el("div", {}, [spec.persona]));
-
-    card.appendChild(el("div", { className: "label" }, ["Instructions"]));
-    const list = el("ul", {}, (spec.instructions || []).map((instr) => el("li", {}, [instr])));
-    card.appendChild(list);
-
-    card.appendChild(el("div", { className: "label" }, ["Tools"]));
-    const chips = el("div", { className: "chips" }, (spec.tools || []).map((tool) => el("span", { className: "chip" }, [tool.name])));
-    card.appendChild(chips);
-
-    const details = el("details", {}, [
-      el("summary", {}, ["Raw JSON"]),
-      el("pre", {}, [JSON.stringify(spec, null, 2)]),
-    ]);
-    card.appendChild(details);
-
-    return card;
-  }
-
-  // Shows a spec in the log. When it's a fresh create (fromCreate), it's appended
-  // as a new message; when clicked from the sidebar, it replaces the log with that spec.
-  function showSpecCard(entry, fromCreate) {
-    if (!fromCreate) {
-      activeSpecId = entry.id;
-      renderSidebar();
-      logEl.textContent = "";
-    }
-    logEl.appendChild(buildSpecCard(entry.spec));
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  function setLoading(isLoading) {
-    createBtn.disabled = isLoading;
-    inputEl.disabled = isLoading;
-    let loadingEl = document.getElementById("loadingMsg");
-    if (isLoading) {
-      loadingEl = el("div", { className: "msg-loading", id: "loadingMsg" }, ["Building…"]);
-      logEl.appendChild(loadingEl);
-      logEl.scrollTop = logEl.scrollHeight;
-    } else if (loadingEl) {
-      loadingEl.remove();
-    }
-  }
-
-  async function handleCreate() {
-    const description = inputEl.value.trim();
-    if (!description) return;
-
-    appendUserMessage(description);
-    inputEl.value = "";
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/specs/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description }),
-      });
-      const data = await res.json();
-      setLoading(false);
-
-      if (res.status === 201) {
-        activeSpecId = data.id;
-        showSpecCard(data, true);
-        await loadSpecs();
-      } else {
-        appendError(data.detail || "Something went wrong generating that assistant.");
-      }
-    } catch {
-      setLoading(false);
-      appendError("Network error — could not reach the server.");
-    }
-  }
-
-  createBtn.addEventListener("click", handleCreate);
-  inputEl.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      handleCreate();
-    }
-  });
-
-  logEl.appendChild(el("div", { className: "empty-hint", id: "emptyHint" }, ["Describe the assistant you want and hit Create to get started."]));
-
-  loadSpecs();
-</script>
+<script src="/static/app.js"></script>

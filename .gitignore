@@ -1,9 +1,17 @@
-.claude/
+# Environment / secrets
 .env
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-*.db
 .pytest_cache/
-nul
+
+# Database
+*.db
+
+# Claude Code / tooling
+.claude/
 HANDOFF.md
+graphify-out/
+

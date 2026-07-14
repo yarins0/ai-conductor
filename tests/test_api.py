@@ -108,6 +108,32 @@ def test_get_run_returns_run_and_steps(client):
     assert body["steps"][0]["tool"] == "reach"
 
 
+def test_stream_run_replays_steps_and_ends_with_done(client):
+    # A terminal run: the stream should replay both persisted steps then close
+    # with a done frame — this is also what a reconnect rebuilds from.
+    spec_record = db.save_spec(SAMPLE_SPEC)
+    lead_id = _first_lead_id()
+    run = db.create_run(spec_id=spec_record.id, lead_id=lead_id)
+    db.add_run_step(run.id, "reach", '{"tool": "reach", "status": "ok", "outcome": "answered", "summary": "picked up", "data": {}}')
+    db.add_run_step(run.id, "qualify", '{"tool": "qualify", "status": "ok", "outcome": "qualified", "summary": "score 85", "data": {"intent_score": 85}}')
+    db.finish_run(run.id, "completed")
+
+    response = client.get(f"/api/runs/{run.id}/stream")
+
+    assert response.status_code == 200
+    body = response.text
+    assert '"type": "step"' in body
+    assert '"tool": "reach"' in body
+    assert '"tool": "qualify"' in body
+    assert '"type": "done"' in body
+    assert '"status": "completed"' in body
+
+
+def test_stream_missing_run_returns_404(client):
+    response = client.get("/api/runs/999999/stream")
+    assert response.status_code == 404
+
+
 def test_list_leads_returns_seeded_leads(client):
     response = client.get("/api/leads")
     assert response.status_code == 200

@@ -73,6 +73,18 @@ Each simulated provider derives its outcome from the lead's `sim_profile` field 
 
 Each completed step appends a `RunStepRecord` row rather than rewriting a steps-JSON blob on the run. Append-only rows match how steps actually happen, avoid read-modify-write races on a hot run, and make the run log queryable/inspectable directly in SQLite — which is the point of the Company Brain.
 
+## SSE via a DB-polling generator, not in-memory pub/sub (Phase 3)
+
+The live stream (`GET /api/runs/{id}/stream`) is an async generator that polls the persisted `RunStepRecord` rows every 0.3s and emits new ones, closing when the run reaches a terminal status. Chosen over an in-memory `asyncio.Queue` fan-out because every step is already durable (Phase 2 decision): polling durable state makes reconnect/replay free — each connection replays all steps from row zero, so a dropped-and-reopened stream rebuilds the whole view with no extra machinery. The cost (a sync DB read on the event loop each poll) is negligible at single-user scale; a queue would add subscribe-after-start replay logic and cleanup for no benefit here.
+
+## Edit-loop fallback trigger: cap-hit or unrecoverable → whole-spec regenerate (Phase 3)
+
+`edit_spec` falls back to the create path (whole-spec regeneration from a synthesized description) in exactly three cases: the hard iteration cap (`MAX_EDIT_ITERATIONS = 8`) is exhausted without a `finish`, the model returns a working copy that fails validation, or the Anthropic call raises mid-loop. Invalid *tool arguments* do **not** trigger the fallback — they're fed back as error strings so the model self-corrects (rule #4). This keeps the fallback for genuine dead-ends only, so a normal edit stays a targeted mutation while a stuck loop still always yields a valid spec.
+
+## Frontend JS split out to `static/app.js` (Phase 3)
+
+The Session panel + run/stream/edit logic pushed `static/index.html` to ~570 lines, over the project's 500-line cap. Split the `<script>` body into `static/app.js` (referenced via the existing `/static` mount). The "single static file, no build step" decision is kept in spirit — still vanilla JS, no bundler, no framework; the split is mechanical and `index.html` stays markup+CSS only.
+
 ## What was deliberately left out (documented, not forgotten)
 
 Real telephony/calendar/CRM integrations, multiple live assistant archetypes in the demo, tools beyond the three registered, cross-run learning, auth/multi-user, and a production-grade queue/DB. Each is a natural next step once the platform proves out — all sit cleanly behind the seams above, so extending later doesn't require rearchitecting.
