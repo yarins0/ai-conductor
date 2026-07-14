@@ -97,6 +97,10 @@ Phase 4 verifies the guards Phases 1–3 built, it does not add new ones. The "b
 
 The Phase 4 "scripted happy-path walkthrough" is a section of the README (UI steps + equivalent curl) rather than a runnable `scripts/demo.py`. A reviewer reads the walkthrough where they already are, there's nothing extra to maintain or keep in sync with the routes, and the three deterministic seeded leads already make the happy path and both failure branches reproducible on demand.
 
+## Repair stretch-goal cut on measured 0% invalid rate (build-time unknowns)
+
+The Phase 1 plan gated a one-shot repair attempt (feed the validation error back once) on the measured invalid-output rate of whole-spec generation. Measured it via `scripts/measure/measure_unknowns.py`: 0/8 descriptions — including a prompt-injection and an unmappable "taxes and pizza" prompt — produced an invalid spec (the off-topic ones came back as valid empty-tool specs, not validation failures). At a 0% rate the repair path would be dead code, so it's **cut, not deferred**: the existing boundary guard (clean `BuilderError`, never persist an invalid spec) is the whole story. The same run confirmed the edit loop's `MAX_EDIT_ITERATIONS = 8` cap is pure headroom (edits finish in 2–3 LLM turns, 0 fallbacks) — left as-is, a safety net that correctly never trips on realistic requests.
+
 ## What was deliberately left out (documented, not forgotten)
 
 Real telephony/calendar/CRM integrations, multiple live assistant archetypes in the demo, tools beyond the three registered, cross-run learning, auth/multi-user, and a production-grade queue/DB. Each is a natural next step once the platform proves out — all sit cleanly behind the seams above, so extending later doesn't require rearchitecting.

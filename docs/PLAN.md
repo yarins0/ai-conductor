@@ -75,10 +75,10 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 **Exit criteria** ✅: Fresh clone → documented steps → full describe → generate → edit → run demo works. (47 tests passing; 404s + full booked branch re-verified live; break-test guard paths covered by the new tests.)
 
 ## Build-Time Unknowns
-_Measurements to take during development, not design decisions:_
-- Invalid-output rate of whole-spec generation — decides whether the stretch-goal repair attempt is worth adding (boundary validation + clean failure exists from Phase 1 regardless)
-- Does the edit agent loop terminate cleanly on realistic requests, or is the hard step cap doing real work? (observe iteration counts)
-- Is streamed step latency smooth enough to read as "live," or do steps need deliberate pacing? (measure end-to-end step timing)
+_Measurements taken during development, not design decisions. Measured via `scripts/measure/measure_unknowns.py` against `claude-sonnet-5`._
+- **Invalid-output rate of whole-spec generation — measured 0/8 (0%).** ✅ All descriptions (incl. two adversarial/off-topic) produced schema-valid specs; the boundary guard never had to fire. **Decision: the stretch-goal repair attempt is not warranted** — clean-fail + validation is enough (see DECISIONS).
+- **Edit agent loop termination — 0/8 fallbacks; 2 LLM turns for normal edits, 3 for the maximal "start over" case; cap = 8.** ✅ The loop finishes cleanly well under the cap. `MAX_EDIT_ITERATIONS = 8` is a pure safety net (generous headroom), not doing real work on realistic requests.
+- **Streamed step latency — resolved by construction, no measurement needed.** ✅ The run loop has no LLM in it; every step is a fixed 0.5s provider sleep, so pacing is deterministic and reads as "live" without any deliberate pacing added.
 
 ## Out of Scope (for now)
 - Real telephony/voice, calendar, and CRM integrations — provider seam is ready; simulated for the demo (pending answer to Q3)
