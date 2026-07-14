@@ -48,7 +48,7 @@ def test_get_missing_spec_returns_404(client):
     assert response.status_code == 404
 
 
-async def _noop_execute_run(run_id, spec, lead):
+async def _noop_execute_run(run_id, spec, lead, providers=None):
     pass
 
 

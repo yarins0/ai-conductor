@@ -1,24 +1,26 @@
 """Runtime — drives a spec's tool sequence for a lead and writes every
 outcome back to the Company Brain (Context Store).
 
-Importing this module registers the simulated providers (see app/providers.py)
+Importing the app.providers package registers every provider (see
+app/providers/ — one module per tool, each with its simulated + real adapter)
 so the Tool Registry is populated as a side effect of import.
 """
 
 from typing import Any
 
-import app.providers  # noqa: F401  (side effect: registers simulated providers)
 from app import db
 from app.db import LeadRecord
+# Importing the app.providers package also registers every provider as a side effect.
+from app.providers import DEFAULT_PROVIDER, ToolResult, get_provider
 from app.spec import AssistantSpec
-from app.tools import ToolResult, get_provider
 
 
-async def execute_run(run_id: int, spec: AssistantSpec, lead: LeadRecord) -> None:
+async def execute_run(run_id: int, spec: AssistantSpec, lead: LeadRecord, providers: dict[str, str] | None = None) -> None:
     intent_score: int | None = None
 
     for tool in spec.tools:
-        provider = get_provider(tool.name)
+        pid = (providers or {}).get(tool.name)
+        provider = get_provider(tool.name, pid)
         if provider is None:
             _fail_run(run_id, tool.name, "unknown_tool", f"No provider registered for tool '{tool.name}'.")
             return
@@ -29,6 +31,8 @@ async def execute_run(run_id: int, spec: AssistantSpec, lead: LeadRecord) -> Non
             _fail_run(run_id, tool.name, "provider_error", f"Provider raised: {error}")
             return
 
+        # Stamp the resolved provider id so the Company Brain shows which adapter ran.
+        result.data.setdefault("provider", pid or DEFAULT_PROVIDER.get(tool.name))
         db.add_run_step(run_id, tool.name, result.model_dump_json())
 
         if result.outcome == "no_answer":

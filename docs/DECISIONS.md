@@ -105,6 +105,34 @@ The Phase 1 plan gated a one-shot repair attempt (feed the validation error back
 
 The live session (lead picker + Run + streamed steps + outcome) was a right-hand column inside the builder; it's now a standalone page (`static/session.html` + `session.js`) opened by a "Launch assistant" button in the builder header, per window with `?spec=<id>`. Rationale: the builder (author a spec) and the runtime view (watch it act) are two different jobs — separating them lets you run an assistant in one window while editing in another, and each window names the assistant it's running (fetched by id) so multiple live sessions stay legible. The run/stream JS was relocated verbatim (same endpoints, same reconnect-replay behavior), not rewritten; the session window carries its own small `el` helper rather than importing the builder's `app.js`.
 
+## Phase 5 planned as additive, not a replacement — simulated stays the default (Phase 5)
+
+Phase 5 (real providers, user-editable leads) deviates from the original 3-day scope, which listed both under *Out of Scope*. It is planned as strictly **additive** because the test suite depends on the simulated providers and the three seeded demo leads (`test_tools.py`, `test_store.py::test_seed_leads_creates_one_per_sim_profile`, `test_runtime.py` all read `sim_profile`). Consequences: real providers register **behind a mode flag that defaults to simulated**, so CI and a cold demo never need live credentials; the seeded leads stay and user-added leads coexist with them; and `sim_profile` is **gated, not dropped** — kept nullable and demo-only (populated for seeded leads, null for real ones, ignored by real providers) rather than removed, since removing it would break the tests and the simulated path it drives.
+
+## Provider registry is per-tool, keyed by provider id, with a marked default (Phase 5)
+
+The seam went from one provider per tool (`dict[str, Provider]`, last-write-wins) to `dict[str, dict[str, Provider]]` (tool → provider id → Provider) plus small `DEFAULT_PROVIDER` / `PROVIDER_LABELS` maps, so a run can pick which provider fulfills each service. `get_provider(name, provider_id=None)` resolves the default when no id is passed — deliberately, so the single-arg `get_provider("reach")` still returns the default instance the tests monkeypatch and the Runtime uses when no selection is sent. Chosen over a flat `(tool, id)` key so the default lookup and the dropdown payload (`list_providers()`) fall out of one nested dict.
+
+## Real providers are credential-gated stubs, not live integrations (Phase 5)
+
+Each real adapter (`app/providers_real.py`: Twilio reach, HubSpot qualify, Google Calendar book) declares its required env vars; `check_credentials()` raises `ProviderConfigError` when any is missing, and `execute()` is a marked integration point that raises `NotImplementedError` until wired. This demonstrates the seam and the hard-fail behavior without shipping telephony/CRM/calendar calls a 3-day demo can't actually exercise — selecting a real provider without credentials fails cleanly; wiring the real SDK later touches only `execute()`.
+
+## Credential check is a preflight at run creation, not inside the run (Phase 5)
+
+`POST /api/runs` resolves the selected provider for every tool and calls `check_credentials()` **before** creating the run — a missing credential or unknown provider returns 400 and no run/stream is ever started. This is distinct from the in-run `unknown_tool` branch (a provider that resolves but a tool that doesn't), which stays as a safety net for direct `execute_run` calls. Rationale: a doomed run should never appear in the Company Brain or open a dead SSE stream; failing at the boundary keeps the run log honest.
+
+## `sim_profile` gated by nullability, not a DEMO_MODE flag (Phase 5)
+
+`LeadRecord.sim_profile` became `str | None = None` — an explicitly optional, demo-only annotation the simulated providers read and real providers ignore, rather than a required field the domain model forced onto every lead. No separate `DEMO_MODE` env flag was added: the per-tool provider selection plus credential preflight already *is* the sim-vs-real switch, so a flag would be redundant machinery. Seeded demo leads still set the profile (tests depend on it); user-added real leads may omit it. (Caveat: an existing dev `ai_conductor.db` created the column `NOT NULL`; the throwaway file must be recreated once for the nullable schema — `seed_leads()` repopulates.)
+
+## Providers organized one module per tool, not split sim-vs-real (Phase 5)
+
+The initial cut split providers by kind — `app/providers.py` (all simulated) and `app/providers_real.py` (all real). Reorganized into an `app/providers/` package with one module per service (`reach.py` / `qualify.py` / `book.py`), each holding that tool's simulated *and* real adapter side by side. Rationale: a reviewer (or a future integrator wiring up Twilio) reads everything about one service in one place, and adding a tool is one new file, not edits to two parallel files that would drift. The shared credential-gated base (`CredentialGatedProvider`) moved to `app/tools.py` next to `Provider`, so each service module just subclasses it. `STEP_DELAY_SECONDS` stays a package-level attribute so all three simulated providers share one monkeypatchable knob (the tests patch `app.providers.STEP_DELAY_SECONDS`). Importing `app.providers` still registers everything as a side effect — the external contract is unchanged.
+
+## Provider contract + registry moved out of app/tools.py into app/providers/base.py (Phase 5)
+
+Follow-up to the reorg above: `app/tools.py` had become *only* provider/registry code (the `Provider` hierarchy, `CredentialGatedProvider`, `ToolResult`, `ProviderConfigError`, and the `register/get/list` registry), so it was misnamed and misplaced. Moved all of it into `app/providers/base.py` and deleted `tools.py`; consumers now import from `app.providers`. It had to move as a unit, not piecewise: leaving the registry in `tools.py` while moving the `Provider` class into the package would make `tools.py` import from `app.providers`, whose `__init__` imports the service modules, which import `register_provider` back from the still-loading `tools.py` — a cycle. Keeping the whole contract+registry in `base.py` (which depends only on `app.db`) preserves a one-directional `base ← service modules` graph. The service modules import from `app.providers.base` (not the package) to avoid re-entering the package `__init__` mid-registration.
+
 ## What was deliberately left out (documented, not forgotten)
 
 Real telephony/calendar/CRM integrations, multiple live assistant archetypes in the demo, tools beyond the three registered, cross-run learning, auth/multi-user, and a production-grade queue/DB. Each is a natural next step once the platform proves out — all sit cleanly behind the seams above, so extending later doesn't require rearchitecting.

@@ -36,9 +36,10 @@ class LeadRecord(SQLModel, table=True):
     status: str = "new"
     intent_score: int | None = None
     booked_slot: str | None = None
-    # Drives the deterministic simulated providers: "books" | "no_answer" | "not_qualified".
-    # Deterministic (not random) so the demo reliably exercises every branch.
-    sim_profile: str = "books"
+    # Optional, demo-only annotation the simulated providers read and real providers
+    # ignore: "books" | "no_answer" | "not_qualified". Nullable so leads created via
+    # the API need not carry one; a None profile follows the happy path.
+    sim_profile: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -154,6 +155,23 @@ def create_run(spec_id: int, lead_id: int) -> RunRecord:
         spec_id=spec_id,
         lead_id=lead_id,
         status="running",
+        created_at=now,
+        updated_at=now,
+    )
+    with Session(engine) as session:
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+
+
+def create_lead(name: str, company: str, phone: str, sim_profile: str | None = None) -> LeadRecord:
+    now = datetime.now(timezone.utc)
+    record = LeadRecord(
+        name=name,
+        company=company,
+        phone=phone,
+        sim_profile=sim_profile,
         created_at=now,
         updated_at=now,
     )

@@ -37,6 +37,20 @@
   header .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
   header h1 { margin: 4px 0 0; font-size: 22px; }
 
+  #providerControls { margin-bottom: 12px; }
+  .provider-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .provider-row label { flex: 0 0 90px; color: var(--muted); font-size: 12px; text-transform: capitalize; }
+  .provider-row select {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
   #runControls { display: flex; gap: 8px; margin-bottom: 8px; }
   #leadSelect {
     flex: 1;
@@ -97,6 +111,22 @@
   .outcome-line { color: var(--muted); font-size: 13px; margin-top: 6px; }
   .session-hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
   .session-error { color: var(--danger); font-size: 13px; }
+  #addLeadForm { margin-bottom: 16px; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  #addLeadForm .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 8px; }
+  #addLeadForm .form-row { margin-bottom: 8px; }
+  #addLeadForm input, #addLeadForm select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
+  #addLeadForm #addLeadBtn { width: 100%; }
+  #addLeadError { margin-top: 8px; }
+  #addLeadError:empty { display: none; }
 </style>
 
 <div id="session">
@@ -104,11 +134,27 @@
     <div class="eyebrow">Live session</div>
     <h1 id="assistantName">Loading…</h1>
   </header>
+  <div id="providerControls"></div>
   <div id="runControls">
     <select id="leadSelect"></select>
     <button id="runBtn" disabled>Run</button>
   </div>
   <button id="reconnectBtn" disabled>Reconnect stream</button>
+  <div id="addLeadForm">
+    <div class="eyebrow">Add lead</div>
+    <div class="form-row"><input id="leadName" type="text" placeholder="Name"></div>
+    <div class="form-row"><input id="leadCompany" type="text" placeholder="Company"></div>
+    <div class="form-row"><input id="leadPhone" type="text" placeholder="Phone"></div>
+    <div class="form-row">
+      <select id="leadSimProfile">
+        <option value="books" selected>books</option>
+        <option value="no_answer">no_answer</option>
+        <option value="not_qualified">not_qualified</option>
+      </select>
+    </div>
+    <button id="addLeadBtn">Add lead</button>
+    <div id="addLeadError" class="session-error"></div>
+  </div>
   <div id="steps"></div>
   <div id="outcome"></div>
 </div>

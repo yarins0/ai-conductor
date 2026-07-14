@@ -21,9 +21,18 @@ const runBtn = document.getElementById("runBtn");
 const reconnectBtn = document.getElementById("reconnectBtn");
 const stepsEl = document.getElementById("steps");
 const outcomeEl = document.getElementById("outcome");
+const providerControlsEl = document.getElementById("providerControls");
+const leadNameEl = document.getElementById("leadName");
+const leadCompanyEl = document.getElementById("leadCompany");
+const leadPhoneEl = document.getElementById("leadPhone");
+const leadSimProfileEl = document.getElementById("leadSimProfile");
+const addLeadBtn = document.getElementById("addLeadBtn");
+const addLeadErrorEl = document.getElementById("addLeadError");
 
 const specId = Number(new URLSearchParams(location.search).get("spec"));
 let leads = [];
+let specTools = [];         // [{name}, ...] from spec.tools, set by loadAssistant()
+let providerSelects = {};   // toolName -> <select> element, built by renderProviderControls()
 let currentEventSource = null;
 let lastRun = null;  // { runId, leadId } — lets the Reconnect button reopen the stream
 
@@ -43,9 +52,41 @@ async function loadAssistant() {
     const data = await res.json();
     nameEl.textContent = data.name;
     document.title = `Live session — ${data.name}`;
+    specTools = data.spec?.tools || [];
+    renderProviderControls();
   } catch {
     nameEl.textContent = "Could not load assistant";
   }
+}
+
+// One provider <select> per tool in the spec, options from GET /api/providers.
+// Called after loadAssistant() resolves spec.tools; a no-op until then.
+async function renderProviderControls() {
+  if (specTools.length === 0) return;
+
+  let providersByTool = {};
+  try {
+    const res = await fetch("/api/providers");
+    providersByTool = res.ok ? await res.json() : {};
+  } catch {
+    providersByTool = {};
+  }
+
+  providerControlsEl.textContent = "";
+  providerSelects = {};
+  specTools.forEach((tool) => {
+    const options = providersByTool[tool.name] || [];
+    const select = el("select", { "data-tool": tool.name }, []);
+    options.forEach((provider) => {
+      const option = el("option", { value: provider.id }, [provider.label]);
+      if (provider.default) option.setAttribute("selected", "selected");
+      select.appendChild(option);
+    });
+    providerSelects[tool.name] = select;
+    providerControlsEl.appendChild(
+      el("div", { className: "provider-row" }, [el("label", {}, [tool.name]), select])
+    );
+  });
 }
 
 async function loadLeads() {
@@ -57,7 +98,7 @@ async function loadLeads() {
   }
   leadSelectEl.textContent = "";
   leads.forEach((lead) => {
-    leadSelectEl.appendChild(el("option", { value: String(lead.id) }, [`${lead.name} — ${lead.company} (${lead.sim_profile})`]));
+    leadSelectEl.appendChild(el("option", { value: String(lead.id) }, [`${lead.name} — ${lead.company}${lead.sim_profile ? ` (${lead.sim_profile})` : ""}`]));
   });
   runBtn.disabled = !specId || leads.length === 0;
 }
@@ -65,6 +106,9 @@ async function loadLeads() {
 async function handleRun() {
   if (!specId || leads.length === 0) return;
   const leadId = Number(leadSelectEl.value);
+  const providers = Object.fromEntries(
+    Object.entries(providerSelects).map(([toolName, select]) => [toolName, select.value])
+  );
 
   stepsEl.textContent = "";
   outcomeEl.textContent = "";
@@ -73,7 +117,7 @@ async function handleRun() {
     const res = await fetch("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec_id: specId, lead_id: leadId }),
+      body: JSON.stringify({ spec_id: specId, lead_id: leadId, providers }),
     });
     if (!res.ok) {
       const data = await res.json();
@@ -152,7 +196,38 @@ async function showOutcome(leadId, runStatus) {
   }
 }
 
+// Guard: require all three text fields before hitting the API; the backend is
+// the real validation boundary, so this only avoids obvious empty submits.
+async function handleAddLead() {
+  const name = leadNameEl.value.trim();
+  const company = leadCompanyEl.value.trim();
+  const phone = leadPhoneEl.value.trim();
+  if (!name || !company || !phone) return;
+
+  addLeadErrorEl.textContent = "";
+  try {
+    const res = await fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, company, phone, sim_profile: leadSimProfileEl.value }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      addLeadErrorEl.textContent = data.detail || "Could not add lead.";
+      return;
+    }
+    leadNameEl.value = "";
+    leadCompanyEl.value = "";
+    leadPhoneEl.value = "";
+    leadSimProfileEl.value = "books";
+    loadLeads();
+  } catch {
+    addLeadErrorEl.textContent = "Network error adding lead.";
+  }
+}
+
 runBtn.addEventListener("click", handleRun);
+addLeadBtn.addEventListener("click", handleAddLead);
 reconnectBtn.addEventListener("click", () => {
   if (lastRun) openRunStream(lastRun.runId, lastRun.leadId);
 });

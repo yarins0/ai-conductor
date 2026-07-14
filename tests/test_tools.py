@@ -5,7 +5,7 @@ import pytest
 
 import app.providers as providers
 from app.db import LeadRecord
-from app.tools import get_provider
+from app.providers import get_provider
 
 
 @pytest.fixture(autouse=True)

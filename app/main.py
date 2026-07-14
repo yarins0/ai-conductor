@@ -29,6 +29,7 @@ load_dotenv()
 
 from app import builder, db, runtime  # noqa: E402
 from app.spec import AssistantSpec  # noqa: E402
+from app.providers import ProviderConfigError, get_provider, list_providers  # noqa: E402
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -49,10 +50,18 @@ class GenerateSpecRequest(BaseModel):
 class RunRequest(BaseModel):
     spec_id: int
     lead_id: int
+    providers: dict[str, str] | None = None  # per-run tool -> provider_id selection
 
 
 class EditSpecRequest(BaseModel):
     instruction: str
+
+
+class CreateLeadRequest(BaseModel):
+    name: str
+    company: str
+    phone: str
+    sim_profile: str | None = None
 
 
 def spec_record_to_response(record: db.SpecRecord) -> dict:
@@ -146,12 +155,25 @@ async def create_run(request: RunRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"No lead with id {request.lead_id}.")
 
     spec = AssistantSpec.model_validate_json(spec_record.spec_json)
+
+    # Credential preflight: reject an unknown provider or a real one missing its
+    # env vars BEFORE any run row is created, so a bad selection never strands a run.
+    selection = request.providers or {}
+    for tool in spec.tools:
+        provider = get_provider(tool.name, selection.get(tool.name))
+        if provider is None:
+            raise HTTPException(status_code=400, detail=f"No provider '{selection.get(tool.name)}' for tool '{tool.name}'.")
+        try:
+            provider.check_credentials()
+        except ProviderConfigError as error:
+            raise HTTPException(status_code=400, detail=str(error))
+
     run = db.create_run(spec_id=request.spec_id, lead_id=request.lead_id)
     # Fire-and-forget: the run drives itself via the Runtime and persists each
     # step as it goes, so the caller doesn't block on the full reach/qualify/book
     # sequence. The task set keeps a strong reference — the event loop only holds
     # weak refs, so an unreferenced task can be garbage-collected mid-run.
-    task = asyncio.create_task(runtime.execute_run(run.id, spec, lead))
+    task = asyncio.create_task(runtime.execute_run(run.id, spec, lead, request.providers))
     _background_runs.add(task)
     task.add_done_callback(_background_runs.discard)
     return run_record_to_response(run)
@@ -221,9 +243,20 @@ async def stream_run(run_id: int) -> StreamingResponse:
     )
 
 
+@app.get("/api/providers")
+def get_providers() -> dict:
+    return list_providers()
+
+
 @app.get("/api/leads")
 def list_leads() -> list[dict]:
     return [lead_record_to_response(record) for record in db.list_leads()]
+
+
+@app.post("/api/leads", status_code=201)
+def create_lead(request: CreateLeadRequest) -> dict:
+    record = db.create_lead(request.name, request.company, request.phone, request.sim_profile)
+    return lead_record_to_response(record)
 
 
 @app.get("/api/leads/{lead_id}")

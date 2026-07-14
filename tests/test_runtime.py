@@ -7,7 +7,7 @@ import app.providers as providers
 from app import db
 from app.runtime import execute_run
 from app.spec import AssistantSpec, ToolConfig
-from app.tools import get_provider
+from app.providers import get_provider
 
 SAMPLE_SPEC = AssistantSpec(
     name="SDR Assistant",
