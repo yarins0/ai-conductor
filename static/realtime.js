@@ -35,8 +35,9 @@ function sendEvent(event) {
   dc.send(JSON.stringify(event));
 }
 
-// A user-authored text item — used both for the request_lead picker's
-// selection and for narrating a real call's outcome once it lands.
+// A user-authored text item — how a real call's outcome gets into the
+// conversation, since it lands minutes after the tool call that started it was
+// already answered.
 function sendUserMessage(text) {
   sendEvent({
     type: "conversation.item.create",
@@ -195,7 +196,7 @@ async function handleFunctionCall(item) {
   }
 
   if (item.name === "list_leads") return handleListLeads(callId, args);
-  if (item.name === "request_lead") return handleRequestLead(callId);
+  if (item.name === "request_lead") return handleRequestLead(callId, args);
   if (item.name === "web_search") return handleWebSearch(callId, args);
   if (["reach", "qualify", "book"].includes(item.name)) return handleLeadTool(item.name, callId, args);
   // An unregistered function name is a client/server drift, not a
@@ -213,20 +214,33 @@ async function handleListLeads(callId, args) {
   }
 }
 
-// Renders a picker into #steps (there's no lead dropdown anymore) and answers
-// the function call immediately — the model is told a picker is up, not left
-// waiting on the operator's click.
-async function handleRequestLead(callId) {
-  sendFunctionResult(callId, "Picker shown — waiting for the operator.");
+// Renders a picker into #steps (there's no lead dropdown anymore). The call is
+// deliberately left UNANSWERED until the operator clicks: the click is the
+// tool's result, so the model resumes holding the lead it asked for. Answering
+// up front instead ("picker shown") ends the call, and the model — with no
+// other way to learn the choice — asks the operator to say it out loud, which
+// carries no id, and re-opens the picker.
+let openPickerCallId = null;
+
+async function handleRequestLead(callId, args) {
+  if (openPickerCallId) {
+    sendFunctionResult(callId, "A picker is already open — the operator has not picked yet.");
+    return;
+  }
 
   let leads = [];
   try {
-    const res = await fetch("/api/leads");
+    const res = await fetch(`/api/leads?q=${encodeURIComponent(args.query || "")}`);
     leads = res.ok ? await res.json() : [];
   } catch {
     leads = [];
   }
+  if (leads.length === 0) {
+    sendFunctionResult(callId, "No leads matched — ask the operator who to work.");
+    return;
+  }
 
+  openPickerCallId = callId;
   const card = el("div", { className: "step-card" }, [
     el("div", { className: "step-head" }, [el("span", { className: "step-tool" }, ["Pick a lead"])]),
   ]);
@@ -235,10 +249,14 @@ async function handleRequestLead(callId) {
       el("button", {
         onclick: () => {
           activeLeadId = lead.id;
+          openPickerCallId = null;
           card.remove();
-          sendUserMessage(`Operator selected lead: ${lead.name} (id ${lead.id})`);
+          sendFunctionResult(
+            callId,
+            `Operator selected: ${lead.name} — ${lead.company} (lead_id ${lead.id})`
+          );
         },
-      }, [`${lead.name} — ${lead.company}`])
+      }, [`${lead.name} — ${lead.company}${lead.sim_profile ? ` · ${lead.sim_profile}` : ""}`])
     ))
   );
   stepsEl.appendChild(card);

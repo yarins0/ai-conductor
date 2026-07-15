@@ -116,10 +116,24 @@ REQUEST_LEAD: dict[str, Any] = {
     "name": "request_lead",
     "description": (
         "Ask the operator to pick a lead. Use when you need a lead to act on and "
-        "cannot resolve one from the conversation or from list_leads — a picker "
-        "appears in the operator's view. Never guess a lead."
+        "cannot resolve one from the conversation or from list_leads — for "
+        "example when several leads share a name. A picker appears in the "
+        "operator's view and this call returns the lead they pick, so do not ask "
+        "them to say their choice out loud and do not call this again while "
+        "waiting. Never guess a lead."
     ),
-    "parameters": {"type": "object", "properties": {}},
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Optional name or company fragment to narrow the picker to the "
+                    "candidates in question. Omit to show every lead."
+                ),
+            }
+        },
+    },
 }
 
 WEB_SEARCH: dict[str, Any] = {
