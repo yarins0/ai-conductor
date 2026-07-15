@@ -25,7 +25,14 @@ TERMINAL_RUN_STATUSES = ("completed", "failed")
 
 # Load ANTHROPIC_API_KEY (and optional AI_CONDUCTOR_DB) before app modules
 # read the environment at import time.
-load_dotenv("secrets/.env")
+#
+# override=True because uvicorn's reloader (see __main__) runs this import in a
+# parent process whose environment every reload child inherits. Without override
+# the child sees each var already set and skips the file, so the parent pins
+# whatever .env said when it first started and no edit can reach the server
+# short of killing the parent. .env is the source of truth for config here, so
+# it wins over the ambient shell — including PORT, which .env already sets.
+load_dotenv("secrets/.env", override=True)
 
 from app import builder, db, realtime, realtime_bridge, runtime  # noqa: E402
 from app.spec import AssistantSpec  # noqa: E402

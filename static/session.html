@@ -48,7 +48,6 @@
     cursor: pointer;
   }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  #steps { display: flex; flex-direction: column; gap: 8px; }
   .step-card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -108,13 +107,17 @@
      mic track. No typed fallback: voice is the only interaction now. */
   #voiceControls { display: flex; gap: 8px; margin-bottom: 10px; }
   #voiceStatus { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
-  #transcript { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; margin-bottom: 10px; }
+  /* The whole conversation in one chronological stream: what was said and what
+     was done. Tool cards stretch full width against the aligned speech bubbles,
+     so a system event never reads as someone talking. Taller than a pure
+     transcript needs, since step cards live here now too. */
+  #transcript { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; margin-bottom: 10px; }
   .transcript-line { font-size: 14px; line-height: 1.4; padding: 6px 10px; border-radius: 8px; }
   .transcript-you { background: rgba(91, 140, 255, .12); align-self: flex-end; max-width: 85%; }
   .transcript-assistant { background: var(--bg); border: 1px solid var(--border); align-self: flex-start; max-width: 85%; }
   .transcript-error { color: var(--danger); font-size: 13px; }
 
-  /* request_lead picker: a step-card holding one button per candidate lead. */
+  /* Lead lists and the request_lead picker: a step-card holding one button per lead. */
   .lead-picker { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .lead-picker button { background: var(--panel); border: 1px solid var(--border); color: var(--text); text-align: left; }
   .lead-picker button:hover { border-color: var(--accent); }
@@ -132,7 +135,6 @@
   <div id="voiceStatus"></div>
   <div id="transcript"></div>
   <audio id="assistantAudio" autoplay hidden></audio>
-  <div id="steps"></div>
   <div id="outcome"></div>
 </div>
 

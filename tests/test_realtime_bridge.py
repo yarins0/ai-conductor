@@ -111,6 +111,33 @@ def test_accumulate_transcript_empty_for_no_matching_events():
     assert realtime_bridge.accumulate_transcript([{"type": "session.updated"}]) == []
 
 
+# --- first_error ---------------------------------------------------------------
+#
+# The regression these lock down: a rejected session.update produced an `error`
+# event that was collected and then dropped, so a misconfigured session looked
+# exactly like a call where nobody spoke — a real Twilio call reached voicemail,
+# was recorded "answered", and got qualified off an empty transcript.
+
+
+def test_first_error_returns_openai_error_message():
+    events = [
+        {"type": "session.created"},
+        {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Invalid type for 'session.audio.input.format': expected an object, but got a string instead.",
+            },
+        },
+    ]
+
+    assert "expected an object" in realtime_bridge.first_error(events)
+
+
+def test_first_error_is_none_for_a_clean_session():
+    assert realtime_bridge.first_error([{"type": "session.updated"}]) is None
+
+
 # --- _bridge_call relay --------------------------------------------------------
 
 
@@ -172,17 +199,27 @@ def test_bridge_relays_media_unmodified_and_sends_session_update_first(monkeypat
     ])
     monkeypatch.setattr(realtime_bridge, "connect_fn", lambda url, **kwargs: openai_socket)
 
-    transcript, call_sid = asyncio.run(realtime_bridge._bridge_call(twilio_socket, SPEC, lead))
+    transcript, call_sid, openai_error = asyncio.run(
+        realtime_bridge._bridge_call(twilio_socket, SPEC, lead)
+    )
 
     assert call_sid == "CA123"
     assert transcript == []  # no transcript events in this canned exchange
+    assert openai_error is None
 
-    # session.update sent before anything else, g711_ulaw both ways, notes included
+    # session.update sent before anything else, mu-law both ways, notes included.
+    # The GA shapes are asserted literally because getting them wrong is not a
+    # crash: OpenAI rejects the session.update and the call silently goes mute.
     assert openai_socket.sent[0]["type"] == "session.update"
     session = openai_socket.sent[0]["session"]
-    assert session["audio"]["input"]["format"] == "g711_ulaw"
-    assert session["audio"]["output"]["format"] == "g711_ulaw"
+    assert session["type"] == "realtime"
+    assert session["audio"]["input"]["format"] == {"type": "audio/pcmu"}
+    assert session["audio"]["output"]["format"] == {"type": "audio/pcmu"}
     assert "Prefers mornings" in session["instructions"]
+
+    # ...and we greet first: an outbound call whose assistant waits for the lead
+    # to speak is a call the lead hears as silence.
+    assert openai_socket.sent[1] == {"type": "response.create"}
 
     # Twilio -> OpenAI: media payload forwarded verbatim, no conversion
     forwarded = [m for m in openai_socket.sent if m["type"] == "input_audio_buffer.append"]

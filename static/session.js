@@ -17,7 +17,10 @@ function el(tag, props, children) {
 }
 
 const nameEl = document.getElementById("assistantName");
-const stepsEl = document.getElementById("steps");
+// Speech and tool cards share one container so the session reads in the order it
+// happened. A separate steps pane below the transcript could only ever show what
+// was done *after* everything that was said, whatever the real sequence.
+const chatEl = document.getElementById("transcript");
 const outcomeEl = document.getElementById("outcome");
 
 const specId = Number(new URLSearchParams(location.search).get("spec"));
@@ -60,7 +63,7 @@ function renderCallTranscript(transcript) {
 
 // One tool result, rendered identically whether it came back instantly (sim
 // path) or arrived later over the run stream (a real Twilio call). realtime.js
-// reuses this so every tool action reads the same way in #steps.
+// reuses this so every tool action reads the same way in the chat stream.
 function buildResultCard(tool, result) {
   const transcript = result.data && result.data.transcript;
   // A transcript-bearing summary carries the whole dialogue after its first line
@@ -80,11 +83,11 @@ function buildResultCard(tool, result) {
 }
 
 function appendStepCard(data) {
-  stepsEl.appendChild(buildResultCard(data.tool, data.result));
-  stepsEl.scrollTop = stepsEl.scrollHeight;
+  chatEl.appendChild(buildResultCard(data.tool, data.result));
+  chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-// Opens the run's SSE stream and appends each new step to #steps as it lands —
+// Opens the run's SSE stream and appends each new step to the chat as it lands —
 // used for a real (Twilio) reach call, which returns "initiated" immediately
 // and resolves minutes later when the bridge writes the actual reach step.
 // `onStep(data)` runs per step and returns true once it's the one being
@@ -149,6 +152,6 @@ async function showLeadOutcome(leadId) {
   }
 }
 
-stepsEl.appendChild(el("div", { className: "session-hint" }, ["Hit Connect and start talking — the assistant takes it from there."]));
+chatEl.appendChild(el("div", { className: "session-hint" }, ["Hit Connect and start talking — the assistant takes it from there."]));
 
 loadAssistant();

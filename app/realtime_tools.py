@@ -97,7 +97,13 @@ LIST_LEADS: dict[str, Any] = {
     "description": (
         "Search the known leads by name or company. Use this to resolve which "
         "lead the operator means (e.g. 'call Dana from Acme') before acting on "
-        "one. Returns matching leads with their ids."
+        "one. Returns matching leads with their ids. The operator already sees "
+        "every match as a card in their view, so never read the leads out loud "
+        "— do not recite their names, companies, statuses or ids, and do not "
+        "summarise the list. This is the one exception to reporting what a tool "
+        "returned. If the operator only asked to see their leads, say something "
+        "brief like 'here they are' and stop; otherwise say nothing about the "
+        "list and carry straight on with what they actually asked for."
     ),
     "parameters": {
         "type": "object",

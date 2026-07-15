@@ -47,73 +47,98 @@ _SCORE_TOOL = {
 }
 
 
+def nothing_to_judge(data: dict[str, Any] | None = None) -> ToolResult:
+    """No conversation happened, so there is no intent to score.
+
+    Deliberately not a number: any score invented here (a profile guess, a CRM
+    default) is indistinguishable downstream from one a real call earned, and a
+    voicemail that scores 85 is worse than no score at all. `no_transcript` is
+    not in write_back_lead_outcome's set, so this records a step and leaves the
+    lead's status alone rather than asserting a judgment nobody made.
+    """
+    return ToolResult(
+        tool="qualify",
+        status="ok",
+        outcome="no_transcript",
+        summary=(
+            "No conversation to judge — this lead has no call transcript yet, so "
+            "there is nothing to score. Reach them first."
+        ),
+        data={"scored_from": "nothing", **(data or {})},
+    )
+
+
+async def score_from_transcript(lead: LeadRecord, transcript: list[dict[str, str]]) -> ToolResult:
+    """The actual judge of intent, shared by every qualify provider: the score
+    comes from what the lead said, never from which provider is wired up."""
+    client = anthropic.AsyncAnthropic()
+    response = await client.messages.create(
+        model=SCORER_MODEL,
+        max_tokens=SCORER_MAX_OUTPUT_TOKENS,
+        system=_SCORER_SYSTEM_PROMPT,
+        tools=[_SCORE_TOOL],
+        tool_choice={"type": "tool", "name": SCORE_TOOL_NAME},
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Call transcript with {lead.name} at {lead.company}:\n"
+                    f"{sim_lead.as_dialogue(transcript)}"
+                ),
+            }
+        ],
+    )
+
+    block = next((b for b in response.content if b.type == "tool_use"), None)
+    if block is None:
+        return ToolResult(
+            tool="qualify",
+            status="error",
+            outcome="provider_error",
+            summary="The scorer did not return a score for that call.",
+        )
+
+    # Boundary validation (implementation rule #2): the model's numbers are
+    # untrusted input, and an out-of-range score would corrupt the Brain.
+    try:
+        intent_score = int(block.input["intent_score"])
+        reason = str(block.input["reason"])
+    except (KeyError, TypeError, ValueError):
+        return ToolResult(
+            tool="qualify",
+            status="error",
+            outcome="provider_error",
+            summary="The scorer returned a malformed score for that call.",
+        )
+    intent_score = max(0, min(100, intent_score))
+
+    outcome = "qualified" if intent_score >= QUALIFY_THRESHOLD else "not_qualified"
+    return ToolResult(
+        tool="qualify",
+        status="ok",
+        outcome=outcome,
+        summary=f"Qualification score {intent_score} — {outcome.replace('_', ' ')}. {reason}",
+        data={"intent_score": intent_score, "reason": reason, "scored_from": "transcript"},
+    )
+
+
 class SimulatedQualifyProvider(Provider):
     """Scores the lead's intent from the call transcript when there is one.
 
     A transcript only exists if `reach` ran first and reached someone (the caller
-    threads it through settings). Without one — qualify called standalone, which
-    the live agent may well do — this falls back to the sim_profile-derived score,
-    so the tool still works in isolation.
+    threads it through settings). Without one, a *simulated* lead can still be
+    scored from its designed sim_profile — that is the simulation's own ground
+    truth, and it is labelled as such. A real lead has no profile to fall back
+    on, so there the honest answer is no score at all.
     """
 
     async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
         transcript = settings.get("transcript")
         if transcript:
-            return await self._score_transcript(lead, transcript)
+            return await score_from_transcript(lead, transcript)
+        if lead.sim_profile is None:
+            return nothing_to_judge()
         return await self._score_from_profile(lead)
-
-    async def _score_transcript(
-        self, lead: LeadRecord, transcript: list[dict[str, str]]
-    ) -> ToolResult:
-        client = anthropic.AsyncAnthropic()
-        response = await client.messages.create(
-            model=SCORER_MODEL,
-            max_tokens=SCORER_MAX_OUTPUT_TOKENS,
-            system=_SCORER_SYSTEM_PROMPT,
-            tools=[_SCORE_TOOL],
-            tool_choice={"type": "tool", "name": SCORE_TOOL_NAME},
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Call transcript with {lead.name} at {lead.company}:\n"
-                        f"{sim_lead.as_dialogue(transcript)}"
-                    ),
-                }
-            ],
-        )
-
-        block = next((b for b in response.content if b.type == "tool_use"), None)
-        if block is None:
-            return ToolResult(
-                tool="qualify",
-                status="error",
-                outcome="provider_error",
-                summary="The scorer did not return a score for that call.",
-            )
-
-        # Boundary validation (implementation rule #2): the model's numbers are
-        # untrusted input, and an out-of-range score would corrupt the Brain.
-        try:
-            intent_score = int(block.input["intent_score"])
-            reason = str(block.input["reason"])
-        except (KeyError, TypeError, ValueError):
-            return ToolResult(
-                tool="qualify",
-                status="error",
-                outcome="provider_error",
-                summary="The scorer returned a malformed score for that call.",
-            )
-        intent_score = max(0, min(100, intent_score))
-
-        outcome = "qualified" if intent_score >= QUALIFY_THRESHOLD else "not_qualified"
-        return ToolResult(
-            tool="qualify",
-            status="ok",
-            outcome=outcome,
-            summary=f"Qualification score {intent_score} — {outcome.replace('_', ' ')}. {reason}",
-            data={"intent_score": intent_score, "reason": reason, "scored_from": "transcript"},
-        )
 
     async def _score_from_profile(self, lead: LeadRecord) -> ToolResult:
         """Fallback for a qualify with no call behind it: score from sim_profile."""
@@ -159,20 +184,40 @@ class HubSpotQualifyProvider(CredentialGatedProvider):
                 contact = create.json()
 
         # ponytail: HubSpot has no built-in "intent score" reachable via a plain
-        # API call (real predictive lead scoring is a paid feature). 
-        # intent_score must be a custom contact property in your portal (Settings -> Properties
-        # -> Contact) to be real; falls back to a fixed qualifying score if unset.
+        # API call (real predictive lead scoring is a paid feature), so this is a
+        # ladder: a genuine intent_score custom property in your portal (Settings
+        # -> Properties -> Contact) wins; otherwise the call itself is the
+        # evidence and the shared scorer judges it.
+        #
+        # It used to default to a bare 85 when the property was unset — which is
+        # every portal without that custom property, so the score was a constant
+        # wearing a CRM's name. It never read the call at all, and a voicemail
+        # scored the same 85 as a lead begging to buy. Deleted, not re-tuned:
+        # HubSpot is the record of the contact here, not the judge of intent.
+        contact_id = contact["id"]
         raw_score = contact.get("properties", {}).get("intent_score")
-        intent_score = int(raw_score) if raw_score else 85
-        outcome = "qualified" if intent_score >= QUALIFY_THRESHOLD else "not_qualified"
+        if raw_score:
+            intent_score = max(0, min(100, int(raw_score)))
+            outcome = "qualified" if intent_score >= QUALIFY_THRESHOLD else "not_qualified"
+            return ToolResult(
+                tool="qualify",
+                status="ok",
+                outcome=outcome,
+                summary=f"HubSpot contact {contact_id} — intent score {intent_score} (from CRM).",
+                data={
+                    "intent_score": intent_score,
+                    "hubspot_contact_id": contact_id,
+                    "scored_from": "hubspot",
+                },
+            )
 
-        return ToolResult(
-            tool="qualify",
-            status="ok",
-            outcome=outcome,
-            summary=f"HubSpot contact {contact['id']} — intent score {intent_score}.",
-            data={"intent_score": intent_score, "hubspot_contact_id": contact["id"]},
-        )
+        transcript = settings.get("transcript")
+        if not transcript:
+            return nothing_to_judge({"hubspot_contact_id": contact_id})
+
+        result = await score_from_transcript(lead, transcript)
+        result.data["hubspot_contact_id"] = contact_id
+        return result
 
 
 register_provider("qualify", "sim", SimulatedQualifyProvider(), label="Simulated", default=True)
