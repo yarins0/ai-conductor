@@ -1,7 +1,8 @@
 // Standalone live-session window. Opened by the builder as
-// /static/session.html?spec=<id>; it runs that one assistant against a lead and
-// streams each step. Shares the backend endpoints with the builder, none of its
-// DOM — so it carries its own small `el` helper rather than pulling in app.js.
+// /static/session.html?spec=<id>. The actual conversation is driven by
+// realtime.js (WebRTC); this file owns only what's shared between a scripted
+// step and a live tool call: the assistant header, the step-card renderer, and
+// the run-stream reader that a real (Twilio) reach call polls for its result.
 function el(tag, props, children) {
   const node = document.createElement(tag);
   Object.entries(props || {}).forEach(([key, value]) => {
@@ -16,28 +17,13 @@ function el(tag, props, children) {
 }
 
 const nameEl = document.getElementById("assistantName");
-const leadSelectEl = document.getElementById("leadSelect");
-const runBtn = document.getElementById("runBtn");
-const reconnectBtn = document.getElementById("reconnectBtn");
 const stepsEl = document.getElementById("steps");
 const outcomeEl = document.getElementById("outcome");
-const providerControlsEl = document.getElementById("providerControls");
-const leadNameEl = document.getElementById("leadName");
-const leadCompanyEl = document.getElementById("leadCompany");
-const leadPhoneEl = document.getElementById("leadPhone");
-const leadSimProfileEl = document.getElementById("leadSimProfile");
-const addLeadBtn = document.getElementById("addLeadBtn");
-const addLeadErrorEl = document.getElementById("addLeadError");
 
 const specId = Number(new URLSearchParams(location.search).get("spec"));
-let leads = [];
-let specTools = [];         // [{name}, ...] from spec.tools, set by loadAssistant()
-let providerSelects = {};   // toolName -> <select> element, built by renderProviderControls()
-let currentEventSource = null;
-let lastRun = null;  // { runId, leadId } — lets the Reconnect button reopen the stream
 
 // Fetch the spec by id so the window names the assistant it's running (title +
-// header). A bad/missing id fails cleanly here rather than at Run time.
+// header). A bad/missing id fails cleanly here rather than at connect time.
 async function loadAssistant() {
   if (!specId) {
     nameEl.textContent = "No assistant specified";
@@ -52,110 +38,9 @@ async function loadAssistant() {
     const data = await res.json();
     nameEl.textContent = data.name;
     document.title = `Live session — ${data.name}`;
-    specTools = data.spec?.tools || [];
-    renderProviderControls();
   } catch {
     nameEl.textContent = "Could not load assistant";
   }
-}
-
-// One provider <select> per tool in the spec, options from GET /api/providers.
-// Called after loadAssistant() resolves spec.tools; a no-op until then.
-async function renderProviderControls() {
-  if (specTools.length === 0) return;
-
-  let providersByTool = {};
-  try {
-    const res = await fetch("/api/providers");
-    providersByTool = res.ok ? await res.json() : {};
-  } catch {
-    providersByTool = {};
-  }
-
-  providerControlsEl.textContent = "";
-  providerSelects = {};
-  specTools.forEach((tool) => {
-    const options = providersByTool[tool.name] || [];
-    const selectId = `provider-${tool.name}`;
-    const select = el("select", { id: selectId, name: selectId, "data-tool": tool.name }, []);
-    options.forEach((provider) => {
-      const option = el("option", { value: provider.id }, [provider.label]);
-      if (provider.default) option.setAttribute("selected", "selected");
-      select.appendChild(option);
-    });
-    providerSelects[tool.name] = select;
-    providerControlsEl.appendChild(
-      el("div", { className: "provider-row" }, [el("label", { for: selectId }, [tool.name]), select])
-    );
-  });
-}
-
-async function loadLeads() {
-  try {
-    const res = await fetch("/api/leads");
-    leads = res.ok ? await res.json() : [];
-  } catch {
-    leads = [];
-  }
-  leadSelectEl.textContent = "";
-  leads.forEach((lead) => {
-    leadSelectEl.appendChild(el("option", { value: String(lead.id) }, [`${lead.name} — ${lead.company}${lead.sim_profile ? ` (${lead.sim_profile})` : ""}`]));
-  });
-  runBtn.disabled = !specId || leads.length === 0;
-}
-
-async function handleRun() {
-  if (!specId || leads.length === 0) return;
-  const leadId = Number(leadSelectEl.value);
-  const providers = Object.fromEntries(
-    Object.entries(providerSelects).map(([toolName, select]) => [toolName, select.value])
-  );
-
-  stepsEl.textContent = "";
-  outcomeEl.textContent = "";
-
-  try {
-    const res = await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec_id: specId, lead_id: leadId, providers }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      outcomeEl.appendChild(el("div", { className: "session-error" }, [data.detail || "Could not start the run."]));
-      return;
-    }
-    const run = await res.json();
-    openRunStream(run.id, leadId);
-  } catch {
-    outcomeEl.appendChild(el("div", { className: "session-error" }, ["Network error starting the run."]));
-  }
-}
-
-// Opening (or reopening) the stream clears the step list on `open` and lets the
-// server replay every persisted step — so a reconnect rebuilds the view from
-// durable state, not a blank panel. This is the "survive a reconnect" behavior.
-function openRunStream(runId, leadId) {
-  if (currentEventSource) currentEventSource.close();
-  lastRun = { runId, leadId };
-  reconnectBtn.disabled = false;
-
-  const source = new EventSource(`/api/runs/${runId}/stream`);
-  currentEventSource = source;
-
-  source.addEventListener("open", () => {
-    stepsEl.textContent = "";
-    outcomeEl.textContent = "";
-  });
-  source.addEventListener("message", (event) => {
-    const data = JSON.parse(event.data);
-    if (data.type === "step") {
-      appendStepCard(data);
-    } else if (data.type === "done") {
-      source.close();
-      showOutcome(leadId, data.status);
-    }
-  });
 }
 
 // Renders the call the assistant actually had with the lead. `reach` returns the
@@ -173,14 +58,14 @@ function renderCallTranscript(transcript) {
   );
 }
 
-// One tool result, rendered identically for a scripted step and a live action.
-// voice.js reuses this (it shares this file's global scope) so the two modes
-// can't drift apart visually.
+// One tool result, rendered identically whether it came back instantly (sim
+// path) or arrived later over the run stream (a real Twilio call). realtime.js
+// reuses this so every tool action reads the same way in #steps.
 function buildResultCard(tool, result) {
   const transcript = result.data && result.data.transcript;
   // A transcript-bearing summary carries the whole dialogue after its first line
-  // (the live agent is fed the summary, so it must contain the call). Onscreen
-  // that would be an unreadable blob, so show the headline and render the
+  // (the model is fed the summary, so it must contain the call). Onscreen that
+  // would be an unreadable blob, so show the headline and render the
   // structured transcript underneath instead.
   const headline = transcript ? result.summary.split("\n")[0] : result.summary;
   const children = [
@@ -199,15 +84,53 @@ function appendStepCard(data) {
   stepsEl.scrollTop = stepsEl.scrollHeight;
 }
 
-// After the run ends, read the lead back so the Company-Brain write-back
-// (status + score + booked slot) is visible, not just the streamed steps.
-async function showOutcome(leadId, runStatus) {
-  outcomeEl.textContent = "";
-  if (runStatus === "failed") {
-    outcomeEl.appendChild(el("div", { className: "session-error" }, ["Run failed — see the steps above."]));
-    return;
+// Opens the run's SSE stream and appends each new step to #steps as it lands —
+// used for a real (Twilio) reach call, which returns "initiated" immediately
+// and resolves minutes later when the bridge writes the actual reach step.
+// `onStep(data)` runs per step and returns true once it's the one being
+// awaited. The server self-terminates the stream after ~60s (MAX_STREAM_POLLS
+// in app/main.py) even though a real call can run longer, so a `done` without
+// the awaited step found reopens the stream rather than giving up.
+//
+// `skip` is the step count already known (and already rendered directly by the
+// caller) before this stream opened — every reconnect replays all persisted
+// steps from the start, so without this the earlier steps would double up.
+async function openRunStream(runId, { onStep } = {}) {
+  let resolved = false;
+  let skip = 0;
+  try {
+    const res = await fetch(`/api/runs/${runId}`);
+    if (res.ok) skip = (await res.json()).steps.length;
+  } catch {
+    skip = 0;
   }
 
+  function open() {
+    let index = 0;
+    const source = new EventSource(`/api/runs/${runId}/stream`);
+    source.addEventListener("message", (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "step") {
+        const position = index++;
+        if (position < skip) return;
+        // Advance past everything rendered so a reconnect's full replay can't
+        // double-render steps that arrived during the previous stream.
+        skip = position + 1;
+        appendStepCard(data);
+        if (onStep && onStep(data)) resolved = true;
+      } else if (data.type === "done") {
+        source.close();
+        if (!resolved) open();
+      }
+    });
+  }
+  open();
+}
+
+// After qualify/book, read the lead back so the Company-Brain write-back
+// (status + intent score + booked slot) is visible, not just what was said.
+async function showLeadOutcome(leadId) {
+  outcomeEl.textContent = "";
   let lead = null;
   try {
     const res = await fetch(`/api/leads/${leadId}`);
@@ -226,45 +149,6 @@ async function showOutcome(leadId, runStatus) {
   }
 }
 
-// Guard: require all three text fields before hitting the API; the backend is
-// the real validation boundary, so this only avoids obvious empty submits.
-async function handleAddLead() {
-  const name = leadNameEl.value.trim();
-  const company = leadCompanyEl.value.trim();
-  const phone = leadPhoneEl.value.trim();
-  if (!name || !company || !phone) return;
-
-  addLeadErrorEl.textContent = "";
-  try {
-    const res = await fetch("/api/leads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // `|| null` so "no profile" sends a real null, not "" — the column is
-      // nullable and an empty string would be a third, meaningless value.
-      body: JSON.stringify({ name, company, phone, sim_profile: leadSimProfileEl.value || null }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      addLeadErrorEl.textContent = data.detail || "Could not add lead.";
-      return;
-    }
-    leadNameEl.value = "";
-    leadCompanyEl.value = "";
-    leadPhoneEl.value = "";
-    leadSimProfileEl.value = "";
-    loadLeads();
-  } catch {
-    addLeadErrorEl.textContent = "Network error adding lead.";
-  }
-}
-
-runBtn.addEventListener("click", handleRun);
-addLeadBtn.addEventListener("click", handleAddLead);
-reconnectBtn.addEventListener("click", () => {
-  if (lastRun) openRunStream(lastRun.runId, lastRun.leadId);
-});
-
-stepsEl.appendChild(el("div", { className: "session-hint" }, ["Pick a lead and Run to watch this assistant work."]));
+stepsEl.appendChild(el("div", { className: "session-hint" }, ["Hit Connect and start talking — the assistant takes it from there."]));
 
 loadAssistant();
-loadLeads();

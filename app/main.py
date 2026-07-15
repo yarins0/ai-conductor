@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ TERMINAL_RUN_STATUSES = ("completed", "failed")
 # read the environment at import time.
 load_dotenv("secrets/.env")
 
-from app import builder, db, live_agent, realtime, realtime_bridge, runtime  # noqa: E402
+from app import builder, db, realtime, realtime_bridge, runtime  # noqa: E402
 from app.spec import AssistantSpec  # noqa: E402
 from app.providers import ProviderConfigError, get_provider, list_providers  # noqa: E402
 
@@ -272,70 +272,6 @@ async def stream_run(run_id: int) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.websocket("/api/live/{spec_id}")
-async def live_session(websocket: WebSocket, spec_id: int) -> None:
-    """Live voice/agentic mode (Phase 6). The browser handles speech I/O and sends
-    each user turn as text; the model decides which registered tool to invoke,
-    non-linearly, and its actions persist to the Company Brain exactly like a
-    scripted run. A sibling to create_run/stream_run — the linear Runtime is
-    untouched.
-
-    Protocol: client sends {"type":"start","lead_id","providers"} once, then
-    {"type":"user","text"} per turn; server replies with a {"type":"ready","run_id"},
-    then per turn the live_agent events ({"type":"assistant"|"action"|"error"})
-    followed by a {"type":"turn_done"} marking the turn complete."""
-    await websocket.accept()
-
-    spec_record = db.get_spec(spec_id)
-    if spec_record is None:
-        await websocket.send_json({"type": "error", "message": f"No spec with id {spec_id}."})
-        await websocket.close()
-        return
-    spec = AssistantSpec.model_validate_json(spec_record.spec_json)
-
-    try:
-        start = await websocket.receive_json()
-    except WebSocketDisconnect:
-        return
-
-    lead = db.get_lead(start.get("lead_id"))
-    if lead is None:
-        await websocket.send_json({"type": "error", "message": "Lead not found."})
-        await websocket.close()
-        return
-
-    selection = start.get("providers") or {}
-    preflight_error = _provider_preflight(spec, selection)
-    if preflight_error is not None:
-        await websocket.send_json({"type": "error", "message": preflight_error})
-        await websocket.close()
-        return
-
-    run = db.create_run(spec_id=spec_id, lead_id=lead.id)
-    session = live_agent.LiveSession(spec, lead, run.id, selection)
-    await websocket.send_json({"type": "ready", "run_id": run.id})
-
-    # Each user turn is driven to completion (the model may chain several tool
-    # calls) before the next is read. finish_run on disconnect so the run row is
-    # terminal and the conversation's steps are inspectable in the Company Brain.
-    try:
-        while True:
-            message = await websocket.receive_json()
-            if message.get("type") != "user":
-                continue
-            user_text = (message.get("text") or "").strip()
-            if not user_text:
-                continue
-            async for event in session.handle_turn(user_text):
-                await websocket.send_json(event)
-            # Explicit turn boundary: lets the browser resume listening only once a
-            # full turn (which may chain several tool calls) is done, so the mic
-            # never reopens between the assistant's own spoken fragments.
-            await websocket.send_json({"type": "turn_done"})
-    except WebSocketDisconnect:
-        db.finish_run(run.id, "completed")
 
 
 @app.get("/api/providers")

@@ -37,7 +37,11 @@ REALTIME_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "twiml_url": {
                     "type": "string",
                     "description": "Optional URL for call instructions (real telephony only).",
-                }
+                },
+                "lead_id": {
+                    "type": "integer",
+                    "description": "The id of the lead to act on, from list_leads.",
+                },
             },
         },
     },
@@ -54,7 +58,11 @@ REALTIME_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "notes": {
                     "type": "string",
                     "description": "Optional qualification notes gathered from the conversation.",
-                }
+                },
+                "lead_id": {
+                    "type": "integer",
+                    "description": "The id of the lead to act on, from list_leads.",
+                },
             },
         },
     },
@@ -71,7 +79,11 @@ REALTIME_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "preferred_time": {
                     "type": "string",
                     "description": "Optional meeting time the lead requested, in plain text.",
-                }
+                },
+                "lead_id": {
+                    "type": "integer",
+                    "description": "The id of the lead to act on, from list_leads.",
+                },
             },
         },
     },
@@ -165,6 +177,7 @@ def operator_instructions(spec: AssistantSpec) -> str:
         "You are speaking out loud, so keep replies short, natural, and "
         "conversational. Report what your tools actually returned, including "
         "what was said on a call, and never claim a tool's result before you "
-        "have actually called it."
+        "have actually called it. Pass the lead_id you resolved via list_leads "
+        "when calling reach, qualify, or book."
     )
     return "\n".join(lines)

@@ -88,6 +88,13 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
             "model": REALTIME_MODEL,
             "instructions": operator_instructions(spec),
             "tools": realtime_tools_for_spec(spec),
+            # Same nested audio shape as realtime_bridge._session_update, minus the
+            # g711_ulaw format (WebRTC negotiates its own codec) — gives the UI the
+            # operator's own words via input transcription, and a fixed voice.
+            "audio": {
+                "input": {"transcription": {"model": "gpt-realtime-whisper"}},
+                "output": {"voice": "marin"},
+            },
         }
     }
     data = await _openai_post("/realtime/client_secrets", payload)

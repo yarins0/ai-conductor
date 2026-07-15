@@ -145,50 +145,6 @@ def test_get_missing_lead_returns_404(client):
     assert response.status_code == 404
 
 
-# --- Live voice/agentic WebSocket ------------------------------------------
-#
-# LiveSession is faked so the socket plumbing (handshake, event forwarding, the
-# turn_done boundary) is tested without an LLM call. The loop itself is covered
-# deterministically in test_live_agent.py.
-
-
-class _FakeLiveSession:
-    def __init__(self, spec, lead, run_id, providers=None):
-        self.run_id = run_id
-
-    async def handle_turn(self, user_text):
-        yield {"type": "assistant", "text": "Sure thing."}
-        yield {
-            "type": "action",
-            "tool": "book",
-            "result": {"tool": "book", "status": "ok", "outcome": "booked", "summary": "done", "data": {}},
-        }
-
-
-def test_live_session_ready_forwards_events_and_marks_turn_done(client, monkeypatch):
-    monkeypatch.setattr(main.live_agent, "LiveSession", _FakeLiveSession)
-    spec_record = db.save_spec(SAMPLE_SPEC)
-    lead_id = _first_lead_id()
-
-    with client.websocket_connect(f"/api/live/{spec_record.id}") as websocket:
-        websocket.send_json({"type": "start", "lead_id": lead_id, "providers": {}})
-        assert websocket.receive_json()["type"] == "ready"
-
-        websocket.send_json({"type": "user", "text": "book me a meeting"})
-        assert websocket.receive_json() == {"type": "assistant", "text": "Sure thing."}
-        action = websocket.receive_json()
-        assert action["type"] == "action" and action["tool"] == "book"
-        assert websocket.receive_json() == {"type": "turn_done"}
-
-
-def test_live_session_missing_lead_sends_error(client):
-    spec_record = db.save_spec(SAMPLE_SPEC)
-    with client.websocket_connect(f"/api/live/{spec_record.id}") as websocket:
-        websocket.send_json({"type": "start", "lead_id": 999999, "providers": {}})
-        message = websocket.receive_json()
-        assert message["type"] == "error"
-
-
 # --- Lead CRUD (email/notes, update, delete, search) ------------------------
 
 
