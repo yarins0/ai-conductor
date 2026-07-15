@@ -7,7 +7,7 @@ Unknown #3 (streamed step latency) is answered by construction — the run loop
 has no LLM in it; every step is a fixed 0.5s provider sleep — so it needs no
 measurement.
 
-Run from the repo root (it loads .env the same way the app does):
+Run from the repo root (it loads secrets/.env the same way the app does):
 
     python scripts/measure/measure_unknowns.py            # both
     python scripts/measure/measure_unknowns.py create     # only #1
@@ -21,7 +21,7 @@ import sys
 
 from dotenv import load_dotenv
 
-load_dotenv()  # same env-loading the app does (app/main.py)
+load_dotenv("secrets/.env")  # same env-loading the app does (app/main.py)
 
 # Import the app package. When run as `python scripts/measure/...`, Python puts
 # the script's own dir on sys.path, not the repo root — so add the repo root.
@@ -99,7 +99,7 @@ def _check_key() -> None:
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         sys.exit(
-            "ANTHROPIC_API_KEY is not set. Put it in .env at the repo root "
+            "ANTHROPIC_API_KEY is not set. Put it in secrets/.env "
             "(ANTHROPIC_API_KEY=sk-...) and run again from the repo root."
         )
 

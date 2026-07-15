@@ -2,9 +2,10 @@ import asyncio
 import json
 
 import pytest
+from conftest import Response, text_block, tool_block
 
 import app.providers as providers
-from app import db
+from app import db, sim_lead
 from app.runtime import execute_run
 from app.spec import AssistantSpec, ToolConfig
 from app.providers import get_provider
@@ -26,7 +27,27 @@ def _lead_by_profile(sim_profile: str) -> db.LeadRecord:
     return next(lead for lead in db.list_leads() if lead.sim_profile == sim_profile)
 
 
-def test_happy_path_books_lead() -> None:
+def _canned_call(intent_score: int | None = None) -> list[Response]:
+    """Enough canned model turns for one full simulated call, plus an optional
+    qualify score. `reach` now holds a real conversation, so every runtime test
+    that reaches a lead would otherwise hit the live API — this keeps them free,
+    fast, and deterministic.
+
+    Note the score is what drives the qualified/not_qualified branch now; it no
+    longer follows from the lead's sim_profile once there is a transcript to judge.
+    """
+    turns = [Response([text_block("Sure.")]) for _ in range(2 * sim_lead.MAX_CALL_EXCHANGES)]
+    if intent_score is not None:
+        turns.append(
+            Response(
+                [tool_block("record_intent_score", "s1", {"intent_score": intent_score, "reason": "Because."})]
+            )
+        )
+    return turns
+
+
+def test_happy_path_books_lead(fake_anthropic) -> None:
+    fake_anthropic(_canned_call(intent_score=85))
     lead = _lead_by_profile("books")
     spec_record = db.save_spec(SAMPLE_SPEC)
     run = db.create_run(spec_id=spec_record.id, lead_id=lead.id)
@@ -62,7 +83,8 @@ def test_no_answer_lead_stops_after_reach() -> None:
     assert updated_lead.status == "unreachable"
 
 
-def test_not_qualified_lead_stops_after_qualify() -> None:
+def test_not_qualified_lead_stops_after_qualify(fake_anthropic) -> None:
+    fake_anthropic(_canned_call(intent_score=20))  # the score, not the profile, ends this run
     lead = _lead_by_profile("not_qualified")
     spec_record = db.save_spec(SAMPLE_SPEC)
     run = db.create_run(spec_id=spec_record.id, lead_id=lead.id)
@@ -110,7 +132,8 @@ def test_provider_exception_fails_run_cleanly(monkeypatch: pytest.MonkeyPatch) -
     assert finished_run.status == "failed"
 
 
-def test_unregistered_tool_persists_error_and_fails_run() -> None:
+def test_unregistered_tool_persists_error_and_fails_run(fake_anthropic) -> None:
+    fake_anthropic(_canned_call())  # reach really calls before the unknown tool trips
     lead = _lead_by_profile("books")
     bad_spec = AssistantSpec(
         name="Broken Assistant",

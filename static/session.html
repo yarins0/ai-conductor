@@ -96,6 +96,27 @@
     padding: 1px 8px;
   }
   .step-card .step-summary { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  /* The call the assistant had with the lead, inside a reach step. Indented off a
+     rule so it reads as a nested conversation, not more step chrome. */
+  .call-transcript {
+    margin-top: 8px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .call-line { display: flex; gap: 8px; font-size: 13px; line-height: 1.45; }
+  .call-speaker {
+    flex: 0 0 62px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--muted);
+    padding-top: 2px;
+  }
+  .call-assistant .call-speaker { color: var(--accent); }
+  .call-text { flex: 1; }
   #outcome { margin-top: 14px; }
   .outcome-badge {
     display: inline-block;
@@ -127,6 +148,33 @@
   #addLeadForm #addLeadBtn { width: 100%; }
   #addLeadError { margin-top: 8px; }
   #addLeadError:empty { display: none; }
+
+  /* Live voice panel (Phase 6) — sits alongside the scripted-run controls. */
+  #talkBtn { background: var(--panel); border: 1px solid var(--accent); color: var(--accent); }
+  #voicePanel[hidden] { display: none; }
+  #voicePanel { margin-bottom: 16px; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  #voiceStatus { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  #voiceControls { display: flex; gap: 8px; margin-bottom: 10px; }
+  #micBtn { flex: 0 0 auto; }
+  #micBtn.mic-on { background: var(--danger); }
+  #micBtn:disabled { opacity: .5; }
+  #transcript { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; margin-bottom: 10px; }
+  .transcript-line { font-size: 14px; line-height: 1.4; padding: 6px 10px; border-radius: 8px; }
+  .transcript-you { background: rgba(91, 140, 255, .12); align-self: flex-end; max-width: 85%; }
+  .transcript-assistant { background: var(--bg); border: 1px solid var(--border); align-self: flex-start; max-width: 85%; }
+  .transcript-error { color: var(--danger); font-size: 13px; }
+  #voiceInputRow { display: flex; gap: 8px; }
+  #voiceText {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
 </style>
 
 <div id="session">
@@ -138,18 +186,36 @@
   <div id="runControls">
     <select id="leadSelect"></select>
     <button id="runBtn" disabled>Run</button>
+    <button id="talkBtn">Talk</button>
   </div>
   <button id="reconnectBtn" disabled>Reconnect stream</button>
+
+  <!-- Live voice conversation (Phase 6). Hidden until "Talk" connects. Reuses the
+       lead + provider selections above. -->
+  <div id="voicePanel" hidden>
+    <div id="voiceStatus"></div>
+    <div id="voiceControls">
+      <button id="micBtn" disabled>Start mic</button>
+    </div>
+    <div id="transcript"></div>
+    <div id="voiceInputRow">
+      <input id="voiceText" type="text" placeholder="Type to talk…" autocomplete="off">
+      <button id="voiceSendBtn" disabled>Send</button>
+    </div>
+  </div>
   <div id="addLeadForm">
     <div class="eyebrow">Add lead</div>
     <div class="form-row"><input id="leadName" type="text" placeholder="Name"></div>
     <div class="form-row"><input id="leadCompany" type="text" placeholder="Company"></div>
     <div class="form-row"><input id="leadPhone" type="text" placeholder="Phone"></div>
     <div class="form-row">
-      <select id="leadSimProfile">
-        <option value="books" selected>books</option>
-        <option value="no_answer">no_answer</option>
-        <option value="not_qualified">not_qualified</option>
+      <!-- A lead you type in has no simulation archetype, so "none" is the honest
+           default; the profiles below force a simulated lead to behave a set way. -->
+      <select id="leadSimProfile" name="leadSimProfile" aria-label="Simulation profile">
+        <option value="" selected>no profile — real lead</option>
+        <option value="books">simulate: books</option>
+        <option value="no_answer">simulate: no_answer</option>
+        <option value="not_qualified">simulate: not_qualified</option>
       </select>
     </div>
     <button id="addLeadBtn">Add lead</button>
@@ -160,3 +226,4 @@
 </div>
 
 <script src="/static/session.js"></script>
+<script src="/static/voice.js"></script>

@@ -76,7 +76,8 @@ async function renderProviderControls() {
   providerSelects = {};
   specTools.forEach((tool) => {
     const options = providersByTool[tool.name] || [];
-    const select = el("select", { "data-tool": tool.name }, []);
+    const selectId = `provider-${tool.name}`;
+    const select = el("select", { id: selectId, name: selectId, "data-tool": tool.name }, []);
     options.forEach((provider) => {
       const option = el("option", { value: provider.id }, [provider.label]);
       if (provider.default) option.setAttribute("selected", "selected");
@@ -84,7 +85,7 @@ async function renderProviderControls() {
     });
     providerSelects[tool.name] = select;
     providerControlsEl.appendChild(
-      el("div", { className: "provider-row" }, [el("label", {}, [tool.name]), select])
+      el("div", { className: "provider-row" }, [el("label", { for: selectId }, [tool.name]), select])
     );
   });
 }
@@ -157,15 +158,44 @@ function openRunStream(runId, leadId) {
   });
 }
 
-function appendStepCard(data) {
-  const card = el("div", { className: "step-card" }, [
+// Renders the call the assistant actually had with the lead. `reach` returns the
+// transcript so the conversation is inspectable rather than just asserted.
+function renderCallTranscript(transcript) {
+  return el(
+    "div",
+    { className: "call-transcript" },
+    transcript.map((entry) =>
+      el("div", { className: `call-line call-${entry.speaker}` }, [
+        el("span", { className: "call-speaker" }, [entry.speaker === "assistant" ? "Assistant" : "Lead"]),
+        el("span", { className: "call-text" }, [entry.text]),
+      ])
+    )
+  );
+}
+
+// One tool result, rendered identically for a scripted step and a live action.
+// voice.js reuses this (it shares this file's global scope) so the two modes
+// can't drift apart visually.
+function buildResultCard(tool, result) {
+  const transcript = result.data && result.data.transcript;
+  // A transcript-bearing summary carries the whole dialogue after its first line
+  // (the live agent is fed the summary, so it must contain the call). Onscreen
+  // that would be an unreadable blob, so show the headline and render the
+  // structured transcript underneath instead.
+  const headline = transcript ? result.summary.split("\n")[0] : result.summary;
+  const children = [
     el("div", { className: "step-head" }, [
-      el("span", { className: "step-tool" }, [data.tool]),
-      el("span", { className: "step-outcome" }, [data.result.outcome]),
+      el("span", { className: "step-tool" }, [tool]),
+      el("span", { className: "step-outcome" }, [result.outcome]),
     ]),
-    el("div", { className: "step-summary" }, [data.result.summary]),
-  ]);
-  stepsEl.appendChild(card);
+    el("div", { className: "step-summary" }, [headline]),
+  ];
+  if (transcript) children.push(renderCallTranscript(transcript));
+  return el("div", { className: "step-card" }, children);
+}
+
+function appendStepCard(data) {
+  stepsEl.appendChild(buildResultCard(data.tool, data.result));
   stepsEl.scrollTop = stepsEl.scrollHeight;
 }
 
@@ -209,7 +239,9 @@ async function handleAddLead() {
     const res = await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, company, phone, sim_profile: leadSimProfileEl.value }),
+      // `|| null` so "no profile" sends a real null, not "" — the column is
+      // nullable and an empty string would be a third, meaningless value.
+      body: JSON.stringify({ name, company, phone, sim_profile: leadSimProfileEl.value || null }),
     });
     if (!res.ok) {
       const data = await res.json();
@@ -219,7 +251,7 @@ async function handleAddLead() {
     leadNameEl.value = "";
     leadCompanyEl.value = "";
     leadPhoneEl.value = "";
-    leadSimProfileEl.value = "books";
+    leadSimProfileEl.value = "";
     loadLeads();
   } catch {
     addLeadErrorEl.textContent = "Network error adding lead.";

@@ -12,11 +12,25 @@ from app import db
 from app.db import LeadRecord
 # Importing the app.providers package also registers every provider as a side effect.
 from app.providers import DEFAULT_PROVIDER, ToolResult, get_provider
-from app.spec import AssistantSpec
+from app.spec import AssistantSpec, ToolConfig
+
+
+def _settings_for(
+    tool: ToolConfig, spec: AssistantSpec, transcript: list[dict[str, str]] | None
+) -> dict[str, Any]:
+    """The spec's per-tool settings, plus the run context a tool may need: `spec`
+    so a tool can speak as this assistant (reach), and `transcript` so a tool can
+    judge what was said (qualify). Both ride the open settings dict, so no
+    provider signature changes and providers ignore what they don't know."""
+    settings: dict[str, Any] = {**tool.settings, "spec": spec}
+    if transcript is not None:
+        settings["transcript"] = transcript
+    return settings
 
 
 async def execute_run(run_id: int, spec: AssistantSpec, lead: LeadRecord, providers: dict[str, str] | None = None) -> None:
     intent_score: int | None = None
+    transcript: list[dict[str, str]] | None = None
 
     for tool in spec.tools:
         pid = (providers or {}).get(tool.name)
@@ -26,7 +40,7 @@ async def execute_run(run_id: int, spec: AssistantSpec, lead: LeadRecord, provid
             return
 
         try:
-            result = await provider.execute(lead, tool.settings)
+            result = await provider.execute(lead, _settings_for(tool, spec, transcript))
         except Exception as error:  # a provider bug must never crash the server or strand a run
             _fail_run(run_id, tool.name, "provider_error", f"Provider raised: {error}")
             return
@@ -34,6 +48,11 @@ async def execute_run(run_id: int, spec: AssistantSpec, lead: LeadRecord, provid
         # Stamp the resolved provider id so the Company Brain shows which adapter ran.
         result.data.setdefault("provider", pid or DEFAULT_PROVIDER.get(tool.name))
         db.add_run_step(run_id, tool.name, result.model_dump_json())
+
+        # Carry a call transcript forward so a later tool can judge what was
+        # actually said (qualify scores it) instead of guessing.
+        if result.data.get("transcript"):
+            transcript = result.data["transcript"]
 
         if result.outcome == "no_answer":
             db.update_lead_outcome(lead.id, "unreachable")

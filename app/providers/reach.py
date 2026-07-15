@@ -7,18 +7,23 @@ from typing import Any
 import httpx
 
 import app.providers as providers  # STEP_DELAY_SECONDS lives on the package (shared, monkeypatchable)
+from app import sim_lead
 from app.db import LeadRecord
 from app.providers.base import CredentialGatedProvider, Provider, ToolResult, register_provider
 
 
 class SimulatedReachProvider(Provider):
-    # Outcome is derived deterministically from lead.sim_profile so the demo
-    # reliably exercises each branch; a null profile (real/user-added lead) falls
-    # through to the "answered" path.
-    async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
-        await asyncio.sleep(providers.STEP_DELAY_SECONDS)
+    """Places a call that actually happens: a bounded conversation between the
+    assistant (speaking from its spec) and a simulated lead (see app/sim_lead.py).
 
+    `sim_profile` still decides who picks up, so the demo reliably exercises the
+    no-answer branch — but what gets *said* once they do is no longer scripted,
+    and the transcript rides back in `data` for qualify and the session view.
+    """
+
+    async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
         if lead.sim_profile == "no_answer":
+            await asyncio.sleep(providers.STEP_DELAY_SECONDS)  # ringing out
             return ToolResult(
                 tool="reach",
                 status="ok",
@@ -27,12 +32,33 @@ class SimulatedReachProvider(Provider):
                 data={"channel": "voice"},
             )
 
+        # The caller (Runtime / LiveSession) injects the spec, because the
+        # assistant on the call *is* the spec. Without one there is nobody to be,
+        # and a canned "they picked up" is precisely the lie this replaced — so
+        # this reports an error rather than inventing an outcome.
+        spec = settings.get("spec")
+        if spec is None:
+            return ToolResult(
+                tool="reach",
+                status="error",
+                outcome="provider_error",
+                summary="Cannot place a call without an assistant spec to speak from.",
+                data={"channel": "voice"},
+            )
+
+        transcript = await sim_lead.run_call(spec, lead)
+        # The summary is what gets fed back to the live agent, so it carries the
+        # call itself — otherwise the assistant would be narrating a call it has
+        # no way to read.
         return ToolResult(
             tool="reach",
             status="ok",
             outcome="answered",
-            summary=f"Called {lead.name} at {lead.phone} — they picked up.",
-            data={"channel": "voice"},
+            summary=(
+                f"Called {lead.name} at {lead.phone} — they picked up.\n"
+                f"{sim_lead.as_dialogue(transcript)}"
+            ),
+            data={"channel": "voice", "transcript": transcript},
         )
 
 

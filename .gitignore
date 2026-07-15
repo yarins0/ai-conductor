@@ -1,5 +1,6 @@
 # Environment / secrets
 .env
+ai-conductor-*.json
 
 # Python
 .venv/

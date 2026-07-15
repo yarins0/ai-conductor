@@ -13,8 +13,9 @@ from app.spec import AssistantSpec
 
 # Read at import time so tests can point this at a temp file by setting the
 # env var before app.db is first imported.
+os.makedirs("db", exist_ok=True)
 engine = create_engine(
-    os.getenv("AI_CONDUCTOR_DB", "sqlite:///ai_conductor.db"),
+    os.getenv("AI_CONDUCTOR_DB", "sqlite:///db/ai_conductor.db"),
     connect_args={"check_same_thread": False},
 )
 
@@ -37,8 +38,11 @@ class LeadRecord(SQLModel, table=True):
     intent_score: int | None = None
     booked_slot: str | None = None
     # Optional, demo-only annotation the simulated providers read and real providers
-    # ignore: "books" | "no_answer" | "not_qualified". Nullable so leads created via
-    # the API need not carry one; a None profile follows the happy path.
+    # ignore: "books" | "no_answer" | "not_qualified". It sets who picks up and how
+    # that lead behaves on the call, not the outcome. Nullable so leads created via
+    # the API need not carry one — a None profile picks up and gets the neutral lead
+    # persona (app/sim_lead.py), so its outcome is earned from the call rather than
+    # predetermined.
     sim_profile: str | None = None
     created_at: datetime
     updated_at: datetime

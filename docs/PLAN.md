@@ -89,11 +89,11 @@ Python + FastAPI (async) backend as a single service, SQLite via SQLModel for pe
 ### Phase 6 — Live voice conversation & non-linear tool invocation
 **Goal**: The end state described in Context — the user talks to a launched assistant directly (real speech in/out), and the assistant invokes reach / qualify / book non-linearly based on what the conversation calls for, rather than the fixed Phase 2 sequence.
 **Tasks**:
-- [ ] Real-time audio pipeline: speech-to-text in, text-to-speech out, wired to a live session
-- [ ] Agentic tool-calling loop over the conversation (replaces the linear `Runtime` for this mode): the model decides which registered tool to invoke and when, from open-ended user speech (e.g. "set up my meeting" → `book` directly)
-- [ ] Reconcile with the existing linear `Runtime`: either a second execution mode alongside it, or a generalization that covers both — decide once the agentic loop's shape is concrete
-- [ ] Frontend: live voice UI (mic capture, playback, turn-taking) in the session view
-**Status**: planned; not yet started. Picks up in the next working session against the real Twilio/HubSpot/Google Calendar providers wired in Phase 5.
+- [x] Real-time audio pipeline: **browser Web Speech API** — `SpeechRecognition` (STT) in, `SpeechSynthesis` (TTS) out, in `static/voice.js`. Audio never leaves the browser; the backend runs the text loop over a WebSocket. Chrome-only, serialized turn-taking (no barge-in); a typed-input fallback drives the same loop everywhere. See DECISIONS.
+- [x] Agentic tool-calling loop over the conversation (`app/live_agent.py`, `LiveSession.handle_turn`): a bounded `while` over the Anthropic SDK — the model decides which registered tool to invoke and when, from open-ended user speech. Modeled on `builder.edit_spec()`; reuses `get_provider().execute()` and persists steps + lead write-back to the Company Brain exactly like a scripted run.
+- [x] Reconcile with the existing linear `Runtime`: **second execution mode alongside it** — a WebSocket endpoint (`/api/live/{spec_id}`) drives `LiveSession`; `runtime.execute_run` is untouched. Chosen over generalizing one runtime so the reliable spine can't regress. See DECISIONS.
+- [x] Frontend: live voice UI in the session view — a "Talk" button, mic toggle, transcript, and typed fallback in `static/session.html` + `static/voice.js`, reusing the existing layout/theme, provider dropdowns, and step-card renderer.
+**Status**: **shipped.** Runs credential-free on the simulated providers (no Twilio/HubSpot/Google needed for the live demo). Backend covered by `tests/test_live_agent.py` (loop logic, mocked LLM) and the WebSocket tests in `tests/test_api.py`; the live spoken turn is a manual check (needs a mic + `ANTHROPIC_API_KEY`).
 
 ## Build-Time Unknowns
 _Measurements taken during development, not design decisions. Measured via `scripts/measure/measure_unknowns.py` against `claude-sonnet-5`._
@@ -102,8 +102,9 @@ _Measurements taken during development, not design decisions. Measured via `scri
 - **Streamed step latency — resolved by construction, no measurement needed.** ✅ The run loop has no LLM in it; every step is a fixed 0.5s provider sleep, so pacing is deterministic and reads as "live" without any deliberate pacing added.
 
 ## Out of Scope (for now)
-- Live voice conversation + non-linear tool invocation — the target end state (see Context); staged as Phase 6, after the scripted spine and real providers landed first
+- ~~Live voice conversation + non-linear tool invocation~~ — **shipped in Phase 6** (see above).
 - Multiple live assistant archetypes in the demo — schema supports it; demo shows one (pending answer to Q1)
 - Learning / compounding across runs (the "gets smarter" loop)
 - Auth, multi-user, Postgres, queue-based workers
-- A committed orchestration framework for Phase 6 — the Phase 3 edit loop deliberately stayed a bounded `while` over the Anthropic SDK (not LangGraph/LangChain) so the iteration-cap-and-recovery judgment was ours to show in review; Phase 6's agentic tool-calling loop may reuse that pattern or reach for a graph-based framework (e.g. LangGraph) if the non-linear branching outgrows a hand-rolled loop — decided when that phase starts, not before.
+- Barge-in / interrupt handling in live voice, WebRTC, streaming partial transcripts, server-side audio — Phase 6 uses full-turn text over a WebSocket with browser-side speech; production upgrade path noted in the README.
+- **Resolved (Phase 6):** the "committed orchestration framework" question — Phase 6's agentic loop **reused the hand-rolled bounded `while`** over the Anthropic SDK (the Phase 3 edit-loop pattern), not LangGraph/LangChain. The non-linear branching stayed well within a hand-rolled loop, so the iteration-cap-and-recovery judgment remained ours to show in review.
