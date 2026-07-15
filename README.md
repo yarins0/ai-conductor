@@ -1,6 +1,6 @@
 # AI Conductor — Voice AI Assistant Builder
 
-A two-agent system: a **Builder** turns a natural-language description into a structured **Assistant Spec** (and edits it by chatting), and the assistant that spec describes then *runs* in one of two modes. The **scripted Runtime** (the reliable spine) drives a fixed per-lead sequence — **reach → qualify → book** — invoking tools fulfilled by swappable providers. The **live agent** (the target end state) holds a real spoken conversation and invokes those same tools **non-linearly**, letting the model decide what the conversation calls for. Both read from and write to a shared **Context Store** (a small "Company Brain"), so specs, leads, and outcomes from either mode accumulate in one inspectable place. Built for an AI-engineering take-home at Alta, a coordinated multi-agent GTM company — the point isn't generated text, it's agents that *act* and surface outcomes (a call happening, an intent score, a booked slot).
+A two-agent system: a **Builder** turns a natural-language description into a structured **Assistant Spec** (and edits it by chatting), and the assistant that spec describes then *runs* live: a real spoken conversation over **OpenAI Realtime**, invoking tools — **reach, qualify, book** — **non-linearly**, letting the model decide what the conversation calls for. Voice covers two surfaces: the **operator** talks to the assistant directly over WebRTC, and `reach` can place a **real phone call** that is itself a live Realtime conversation with the lead, bridged server-side over Twilio Media Streams. A scripted, linear **Runtime** (reach → qualify → book in a fixed order) remains underneath as the tested backend spine, reachable directly over the API/SSE even though the UI now drives the live conversation. Both modes read from and write to a shared **Context Store** (a small "Company Brain"), so specs, leads, and outcomes accumulate in one inspectable place. Built for an AI-engineering take-home at Alta, a coordinated multi-agent GTM company — the point isn't generated text, it's agents that *act* and surface outcomes (a call happening, an intent score, a booked slot).
 
 ## Architecture
 
@@ -9,15 +9,15 @@ A two-agent system: a **Builder** turns a natural-language description into a st
 | Builder | NL → spec (structured output); edit spec (tool-calling loop) |
 | Assistant Spec | Config artifact: objective, behavior, allowed tools (Pydantic models) |
 | Spec Store | Persist / update specs (SQLite) |
-| Context Store ("Company Brain") | Shared state: leads, call outcomes, qualification, booked slots (SQLite) |
-| Runtime (scripted) | Instantiate assistant from spec; drive reach → qualify → book; emit step events |
-| Live Agent (non-linear) | Bounded tool-calling loop over a live conversation; the model picks the tool, in any order |
+| Context Store ("Company Brain") | Shared state: leads (incl. notes), call outcomes, qualification, booked slots, persisted provider settings (SQLite) |
+| Runtime (scripted) | Instantiate assistant from spec; drive reach → qualify → book; emit step events — the tested backend spine, no longer UI-driven |
+| Realtime control plane | Mints ephemeral OpenAI Realtime tokens for the operator's WebRTC session; executes tool calls statelessly (`app/tool_exec.py`); bridges `web_search` to the Responses API |
+| Voice bridge (Twilio) | Relays a real phone call's audio to a second Realtime session so `reach` is itself a live conversation with the lead (`app/realtime_bridge.py`) |
 | Tool Registry | Open set of tools an assistant may invoke |
-| Provider Layer | Fulfills each tool; simulated by default, real Twilio/HubSpot/Google adapters behind credentials |
-| Event Stream | Scripted run progress over SSE; live conversation over a WebSocket |
-| Frontend | Builder chat + live session view (scripted Run + spoken Talk mode) |
+| Provider Layer | Fulfills each tool; simulated by default, real Twilio/HubSpot/Google adapters behind credentials; selection persists as a global setting |
+| Frontend | Builder chat, live voice session (WebRTC), lead management + provider settings dialogs |
 
-**Request flow:** describe an assistant in chat → **generate** (whole-spec structured-output call, validated and persisted) → **edit** (tool-calling agent loop mutates the spec incrementally) → **run** it, either **scripted** (Runtime drives the spec's tools in order, streaming each step over SSE) or **live** (a spoken, non-linear conversation over a WebSocket — see [Live voice mode](#live-voice-mode-non-linear-tool-invocation)) → outcomes (lead status, intent score, booked slot) written back to the Company Brain from either mode.
+**Request flow:** describe an assistant in chat → **generate** (whole-spec structured-output call, validated and persisted) → **edit** (tool-calling agent loop mutates the spec incrementally) → **talk to it live** over OpenAI Realtime — see [Voice](#voice-openai-realtime) — invoking tools non-linearly, or drive the scripted spine directly over the API (`POST /api/runs` + SSE) → outcomes (lead status, intent score, booked slot) written back to the Company Brain either way.
 
 ## The three seams
 
@@ -35,9 +35,14 @@ Defaults used for the demo: one archetype, the reach/qualify/book tool set, simu
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-copy secrets\.env.example secrets\.env   # then put your ANTHROPIC_API_KEY in secrets\.env  (cp on macOS/Linux)
+copy secrets\.env.example secrets\.env   # then fill in secrets\.env  (cp on macOS/Linux)
 python -m app.main
 ```
+
+`secrets/.env` needs:
+- **`ANTHROPIC_API_KEY`** — the Builder (spec generation/editing) and the simulated lead call (`app/sim_lead.py`).
+- **`OPENAI_API_KEY`** — required for voice. The operator session talks to OpenAI directly over WebRTC once this server mints it a token; no tunnel needed for this surface.
+- **`TWILIO_*` + `PUBLIC_BASE_URL`** — only needed for a *real* phone call. Twilio must be able to reach this server for its voice webhook and Media Stream, so run `ngrok http 8123` (or whatever port you're on), paste the printed `https://...` URL into `PUBLIC_BASE_URL`, and **restart the server** — `load_dotenv` only runs once at import, so a process already running keeps the old value even after you edit the file. Without these, `reach` still runs the simulated two-agent call.
 
 Open **http://localhost:8123**. Override the port with the `PORT` env var. Reset the demo data by deleting `db/ai_conductor.db` — it reseeds the 3 demo leads on next boot.
 
@@ -45,8 +50,10 @@ Open **http://localhost:8123**. Override the port with the `PORT` env var. Reset
 
 1. **Describe** an assistant in the Builder chat — a schema-valid spec is generated and shown.
 2. **Edit** it via chat, e.g. "make the persona warmer and add booking" — the edit agent loop mutates the spec in place.
-3. **Pick a lead and Run** — watch each step (reach, qualify, book) stream live.
-4. **See the outcome** on the lead — status, intent score, booked slot.
+3. **Launch it and talk** — the session window opens a live OpenAI Realtime conversation over WebRTC. Say who to call ("call Dana from Northwind") and the assistant resolves the lead and invokes `reach` / `qualify` / `book` non-linearly, in whatever order the conversation calls for — there's no Run button or fixed step order anymore.
+4. **See the outcome** on the lead — status, intent score, booked slot — and, if `reach` ran, the transcript of the call itself.
+
+Lead notes (set anytime from **Manage leads** on the builder page) are injected into every future call's instructions, simulated or real, so a fact like "prefers mornings" or "already declined once" carries into the assistant's phrasing without repeating it each session.
 
 The three seeded demo leads exercise every branch. Their `sim_profile` sets who picks up and how that lead behaves on the phone — not the outcome itself, which is earned:
 
@@ -58,7 +65,7 @@ The three seeded demo leads exercise every branch. Their `sim_profile` sets who 
 
 **`reach` places a call that actually happens.** Rather than returning a canned "they picked up," the simulated provider runs a real bounded conversation between two agents — your assistant, speaking from its spec, and the lead, played by a second model whose stance comes from `sim_profile` (`app/sim_lead.py`) — and returns the transcript, which renders inside the reach step so you can read exactly what was said. `qualify` then scores *that transcript* for intent and cites what the lead said, so the number in the Company Brain is judged from the call rather than hardcoded. This is the whole point of the exercise made literal: coordinated agents that act, with the evidence inspectable. Simulated leads are still LLM calls, so a run costs tokens; the call is capped at four exchanges and the lead runs on the cheap model.
 
-Equivalent curl:
+**The scripted spine, over the API.** The linear Runtime (reach → qualify → book, fixed order) is still there, tested, and reachable directly — useful for automation or a quick sanity check without opening a mic:
 
 ```bash
 # Generate a spec
@@ -80,15 +87,15 @@ curl -X POST localhost:8123/api/runs -H "Content-Type: application/json" \
 curl -N localhost:8123/api/runs/1/stream
 ```
 
-## Live voice mode (non-linear tool invocation)
+## Voice (OpenAI Realtime)
 
-The scripted run above is the reliable spine. The **live agent** is the target end state: instead of a fixed reach → qualify → book order, you have a real spoken conversation with the assistant and it invokes the same tools *non-linearly* — say "just set up a meeting" and it calls `book` directly; say "actually, am I even a fit?" and it qualifies first.
+Two conversations happen over voice, both on **OpenAI Realtime**:
 
-**Try it:** launch an assistant, click **Talk**, allow the mic, and speak. The assistant replies out loud, and each tool it invokes appears as a step card and is written back to the Company Brain — the same lead status / intent score / booked slot as a scripted run. A typed-input box drives the exact same loop if you'd rather type (or aren't on Chrome). Runs credential-free on the simulated providers.
+**Operator ↔ assistant.** You talk to the assistant directly in the session window over **WebRTC** — audio never touches this server for this surface. The server's only job is what must not live in the browser: `POST /api/realtime/token` mints an ephemeral, spec-scoped session token (only the spec's own tools, plus `list_leads` / `request_lead` / `web_search`, are offered), and each tool call the model makes executes statelessly against `POST /api/realtime/tools/{tool_name}` (`app/tool_exec.py`) — the run for that (spec, lead) pair is found or created per call, so a live conversation accumulates in the Company Brain exactly like a scripted run. There's no lead dropdown before you start talking: say who you mean and the model resolves it via `list_leads`, or calls `request_lead` to have you pick if it can't.
 
-**How it works.** The browser does speech I/O with the **Web Speech API** (`SpeechRecognition` in, `SpeechSynthesis` out) — audio never leaves the page. Each user turn is sent as text over a WebSocket (`/api/live/{spec_id}`) to a bounded tool-calling loop (`app/live_agent.py`) that reuses the Phase 3 edit-loop pattern: the model decides which registered tool to call, the loop runs it through the **same** `get_provider().execute()` primitive as the scripted Runtime, feeds the typed result back so the model can narrate it, and persists the step + lead outcome. The linear Runtime is untouched — the live agent is a sibling mode, so the spine can't regress.
+**Assistant ↔ lead.** `reach` places the actual call. By default it's simulated — a real bounded text conversation between two models (`app/sim_lead.py`): the assistant speaking from the spec, and a lead persona driven by `sim_profile`. With Twilio credentials and `PUBLIC_BASE_URL` configured, `reach` places a *real* phone call instead, bridged server-side to a second OpenAI Realtime session (`app/realtime_bridge.py`): Twilio's Media Streams and OpenAI's Realtime API both speak G.711 mu-law natively, so the bridge is a byte-for-byte audio relay with no conversion library. Either way, the call's transcript comes back in the same shape and `qualify` scores it unchanged.
 
-**Design choice & limits.** Web Speech is the pragmatic *demo* pipeline, not a production one: it's Chrome/Edge only, turn-taking is serialized (no barge-in — the mic is muted while the assistant speaks to avoid self-hearing), and TTS voice quality is browser-dependent. The **production upgrade path** is a realtime voice API (e.g. OpenAI Realtime / Gemini Live) or an STT→LLM→TTS pipeline (e.g. Deepgram/Whisper + ElevenLabs/Cartesia) over WebRTC for low latency and barge-in — a drop-in for the browser speech layer, leaving the agentic loop and provider seam unchanged.
+**Why Realtime, not the earlier browser Web Speech + Claude loop:** once *both* surfaces needed real voice, one vendor stack beat maintaining two audio pipelines. See `docs/DECISIONS.md` for the full tradeoff and what was deleted.
 
 ## Key tradeoffs
 
@@ -98,8 +105,8 @@ The scripted run above is the reliable spine. The **live agent** is the target e
 
 ## What I'd do next
 
-- **Production voice pipeline** — swap the browser Web Speech layer for a realtime voice API or an STT→LLM→TTS pipeline over WebRTC (low latency, barge-in, cross-browser); the agentic loop and provider seam stay unchanged.
-- **Close the real-provider loops** — a Twilio status-callback webhook to turn `initiated` into a real `answered`/`no_answer`; the Google Calendar and HubSpot adapters are already wired behind credentials.
+- **Operator listen-in on a live phone call** — the operator and lead sessions are currently independent; there's no way to monitor or take over a real call in progress once `reach` places it.
+- **Per-session provider settings** — provider selection is currently one global setting; scoping it per spec or per session would let two assistants run against different providers at once.
 - **Multiple live assistant archetypes** — the schema already supports it; the demo just shows one.
 - **Cross-run learning** — compounding intelligence from accumulated outcomes in the Company Brain.
 
@@ -111,4 +118,4 @@ Each sits cleanly behind an existing seam, so none of it requires rearchitecting
 pytest
 ```
 
-52 tests covering spec validation, the tool registry, the spec/context stores, the scripted Runtime's branches (booked / no-answer / not-qualified / provider-error), the live agent loop (tool invocation, write-back, and provider-failure resilience, with the LLM mocked), the Builder create-path boundary validation and edit loop (self-correction + fallback), and the API including SSE replay, the live WebSocket handshake/turn plumbing, and 404 handling.
+104 tests covering spec validation, the tool registry, the spec/context/settings stores (lead CRUD and search, the SQLite migration for new lead columns, persisted provider settings), the scripted Runtime's branches (booked / no-answer / not-qualified / provider-error), the Realtime control plane and stateless tool executor, the Twilio ↔ OpenAI Realtime bridge (transcript accumulation and media relay, with fake sockets — no real calls), the Builder create-path boundary validation and edit loop (self-correction + fallback), and the API including SSE replay and 404 handling. All LLM and voice-provider calls are mocked — no network, no cost.
