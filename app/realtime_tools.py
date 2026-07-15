@@ -71,8 +71,13 @@ REALTIME_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "type": "function",
         "name": "book",
         "description": (
-            "Schedule a meeting with the lead. Use when the lead wants to book "
-            "time or has agreed to a meeting."
+            "Put time on the calendar. Use it two ways: with a lead_id to schedule "
+            "a meeting with that lead, when they want to book time or have agreed "
+            "to a meeting; or with no lead_id at all to hold plain time on the "
+            "operator's own calendar, when they ask for something that is not "
+            "about a lead ('block an hour tomorrow for the team sync'). Do not "
+            "resolve a lead the operator never mentioned just to book — booking "
+            "without one is a normal thing to do."
         ),
         "parameters": {
             "type": "object",
@@ -87,9 +92,20 @@ REALTIME_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                         "themselves. Omit only if no time was actually agreed."
                     ),
                 },
+                "title": {
+                    "type": "string",
+                    "description": (
+                        "What to call the event, when the operator says what the "
+                        "time is for ('the team sync'). Omit to let it be named "
+                        "after the lead, or left as a plain meeting."
+                    ),
+                },
                 "lead_id": {
                     "type": "integer",
-                    "description": "The id of the lead to act on, from list_leads.",
+                    "description": (
+                        "The id of the lead the meeting is with, from list_leads. "
+                        "Omit entirely to hold time on the operator's own calendar."
+                    ),
                 },
             },
         },
@@ -205,7 +221,9 @@ def operator_instructions(spec: AssistantSpec) -> str:
         "conversational. Report what your tools actually returned, including "
         "what was said on a call, and never claim a tool's result before you "
         "have actually called it. Pass the lead_id you resolved via list_leads "
-        "when calling reach, qualify, or book."
+        "when calling reach, qualify, or book. Booking is the exception to "
+        "needing a lead at all: when the operator asks you to hold time that is "
+        "not about a lead, call book with no lead_id rather than hunting for one."
     )
     # A scheduling assistant that does not know today's date cannot resolve
     # "tomorrow at 9", and the model has no clock of its own. Local time with an

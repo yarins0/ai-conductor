@@ -40,7 +40,9 @@ class TokenRequest(BaseModel):
 
 class ToolCallRequest(BaseModel):
     spec_id: int
-    lead_id: int
+    # None for a tool that is not lead work — book holding plain time on the
+    # operator's own calendar. run_tool rejects the tools that do need one.
+    lead_id: int | None = None
     provider_id: str | None = None
     args: dict[str, Any] = {}
 
@@ -119,11 +121,17 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
 async def execute_tool(tool_name: str, request: ToolCallRequest) -> dict[str, Any]:
     """Execute one tool call from the operator's Realtime session. Stateless:
     the run row is found or created per (spec, lead), so a conversation's
-    actions accumulate in the Company Brain without a server-side session."""
+    actions accumulate in the Company Brain without a server-side session.
+
+    No lead_id is a valid call, not a bad one — book holds plain time without a
+    lead. An id that resolves to nothing is still a 404: the caller named a lead
+    that does not exist, which is a different thing from naming none."""
     spec = _load_spec(request.spec_id)
-    lead = db.get_lead(request.lead_id)
-    if lead is None:
-        raise HTTPException(status_code=404, detail=f"No lead with id {request.lead_id}.")
+    lead = None
+    if request.lead_id is not None:
+        lead = db.get_lead(request.lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail=f"No lead with id {request.lead_id}.")
 
     # Explicit selection wins; otherwise the persisted per-tool setting; the
     # registry default resolves inside run_tool when both are absent.

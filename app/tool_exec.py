@@ -52,23 +52,28 @@ def write_back_lead_outcome(lead_id: int, result: ToolResult) -> None:
 async def run_tool(
     spec_id: int,
     spec: AssistantSpec,
-    lead: db.LeadRecord,
+    lead: db.LeadRecord | None,
     tool_name: str,
     provider_id: str | None,
     model_args: dict[str, Any],
-) -> tuple[int, ToolResult]:
-    """Resolve and run one tool for one lead; persist the step and the lead
-    write-back to that pair's run row. Returns (run_id, result).
+) -> tuple[int | None, ToolResult]:
+    """Resolve and run one tool, for a lead or standalone; persist the step and
+    the lead write-back to that pair's run row. Returns (run_id, result).
+
+    `lead` is None when the operator asks for something that is not lead work —
+    book holding plain time on their own calendar. Nothing is persisted then and
+    run_id comes back None: a run row *is* a (spec, lead) pair, and the Company
+    Brain accumulates what happened to leads, so a personal calendar hold has
+    nothing to accumulate against. The calendar event is its own durable record.
 
     Never raises for conversational failures — a missing provider, missing
-    credentials, or a provider bug all become error ToolResults the voice model
-    can hear and relay to the operator. Only a tool outside the spec raises
-    (ToolNotAllowed), because that request should never have been made.
+    credentials, a tool that needs a lead it wasn't given, or a provider bug all
+    become error ToolResults the voice model can hear and relay to the operator.
+    Only a tool outside the spec raises (ToolNotAllowed), because that request
+    should never have been made.
     """
     if tool_name not in {tool.name for tool in spec.tools}:
         raise ToolNotAllowed(f"Tool '{tool_name}' is not in this assistant's spec.")
-
-    run = db.get_or_create_run(spec_id, lead.id)
 
     provider = get_provider(tool_name, provider_id)
     if provider is None:
@@ -78,8 +83,25 @@ async def run_tool(
             outcome="unknown_tool",
             summary=f"No provider registered for tool '{tool_name}'.",
         )
-        db.add_run_step(run.id, tool_name, result.model_dump_json())
-        return run.id, result
+        run = db.get_or_create_run(spec_id, lead.id) if lead else None
+        if run is not None:
+            db.add_run_step(run.id, tool_name, result.model_dump_json())
+        return (run.id if run else None), result
+
+    # Asked of the provider rather than matched on tool name here, so the
+    # registry stays where a tool declares what it needs (Provider.requires_lead).
+    if lead is None and provider.requires_lead:
+        return None, ToolResult(
+            tool=tool_name,
+            status="error",
+            outcome="needs_lead",
+            summary=(
+                f"{tool_name} works on a lead, and none is selected. Resolve one "
+                "with list_leads, or ask the operator to pick with request_lead."
+            ),
+        )
+
+    run = db.get_or_create_run(spec_id, lead.id) if lead else None
 
     tool_settings = next((tool.settings for tool in spec.tools if tool.name == tool_name), {})
     # `run_id` and `spec` go last so a model-authored argument can never
@@ -87,10 +109,10 @@ async def run_tool(
     settings: dict[str, Any] = {
         **tool_settings,
         **model_args,
-        "run_id": run.id,
+        "run_id": run.id if run else None,
         "spec": spec,
     }
-    transcript = db.latest_transcript_for_run(run.id)
+    transcript = db.latest_transcript_for_run(run.id) if run else None
     if transcript is not None:
         settings["transcript"] = transcript
 
@@ -121,8 +143,8 @@ async def run_tool(
     # step once the call resolves, so `latest_transcript_for_run` and the UI
     # never see a placeholder. If a "call ringing…" row is ever wanted, persist
     # it here and have the bridge's step supersede it.
-    if not (tool_name == "reach" and result.outcome == "initiated"):
+    if run is not None and not (tool_name == "reach" and result.outcome == "initiated"):
         db.add_run_step(run.id, tool_name, result.model_dump_json())
         write_back_lead_outcome(lead.id, result)
 
-    return run.id, result
+    return (run.id if run else None), result

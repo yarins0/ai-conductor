@@ -93,6 +93,27 @@ def test_simulated_book_uses_the_agreed_time_too() -> None:
     assert "2026-07-16T09:00:00+03:00" in result.summary
 
 
+def test_simulated_book_holds_plain_time_without_a_lead() -> None:
+    """Booking is not always lead work: the operator asking to block an hour has
+    no lead to name the event after, so the model's title carries it."""
+    result = asyncio.run(
+        get_provider("book").execute(
+            None, {"preferred_time": "2026-07-16T09:00:00+03:00", "title": "Team sync"}
+        )
+    )
+
+    assert result.outcome == "booked"
+    assert result.data["slot"] == "2026-07-16T09:00:00+03:00"
+    assert "Team sync" in result.summary
+
+
+def test_simulated_book_without_a_lead_or_a_title_still_names_the_event() -> None:
+    result = asyncio.run(get_provider("book").execute(None, {}))
+
+    assert result.outcome == "booked"
+    assert "Meeting" in result.summary
+
+
 def test_get_provider_returns_none_for_unknown_tool() -> None:
     assert get_provider("bogus") is None
 

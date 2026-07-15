@@ -149,12 +149,31 @@ def test_execute_tool_not_in_spec_returns_400(client):
 
 
 def test_execute_tool_missing_lead_returns_404(client):
+    """A lead_id that resolves to nothing is still a 404 — naming a lead that
+    does not exist is a different thing from naming none (below)."""
     record = db.save_spec(BOOK_ONLY_SPEC)
     response = client.post(
         "/api/realtime/tools/book",
         json={"spec_id": record.id, "lead_id": 999999, "args": {}},
     )
     assert response.status_code == 404
+
+
+def test_execute_tool_with_no_lead_books_plain_time(client):
+    """No lead_id at all is a valid call: book holds time on the operator's own
+    calendar. Nothing accumulates in the Company Brain — there is no lead for it
+    to be about — so no run row comes back."""
+    record = db.save_spec(BOOK_ONLY_SPEC)
+    response = client.post(
+        "/api/realtime/tools/book",
+        json={"spec_id": record.id, "args": {"title": "Team sync"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"]["outcome"] == "booked"
+    assert body["run_id"] is None
+    assert "Team sync" in body["result"]["summary"]
 
 
 def test_execute_tool_uses_persisted_provider_setting(client, monkeypatch):

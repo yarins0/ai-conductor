@@ -33,8 +33,14 @@ class ToolResult(BaseModel):
 
 
 class Provider(ABC):
+    # Whether this tool's work is *about* a lead. False lets the tool run with
+    # lead=None — book holding plain time on the operator's own calendar. Asked
+    # of the provider rather than matched on tool name in the caller, so the
+    # registry stays open: a new standalone tool declares itself here.
+    requires_lead: bool = True
+
     @abstractmethod
-    async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult: ...
+    async def execute(self, lead: LeadRecord | None, settings: dict[str, Any]) -> ToolResult: ...
 
     def check_credentials(self) -> None:
         """Preflight hook: real providers override to assert their env vars."""
@@ -57,7 +63,7 @@ class CredentialGatedProvider(Provider):
             if not os.getenv(var):
                 raise ProviderConfigError(f"{self.label} needs {var}")
 
-    async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
+    async def execute(self, lead: LeadRecord | None, settings: dict[str, Any]) -> ToolResult:
         raise NotImplementedError(f"{self.label}: wire up the real integration here.")
 
 

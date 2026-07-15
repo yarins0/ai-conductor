@@ -296,7 +296,7 @@ async function handleFunctionCall(item) {
   if (item.name === "list_leads") return handleListLeads(callId, args);
   if (item.name === "request_lead") return handleRequestLead(callId, args);
   if (item.name === "web_search") return handleWebSearch(callId, args);
-  if (["reach", "qualify", "book"].includes(item.name)) return handleLeadTool(item.name, callId, args);
+  if (["reach", "qualify", "book"].includes(item.name)) return handleSpecTool(item.name, callId, args);
   // An unregistered function name is a client/server drift, not a
   // conversational outcome — tell the model rather than silently stalling it.
   sendFunctionResult(callId, `Unknown tool: ${item.name}`);
@@ -449,22 +449,25 @@ async function handleWebSearch(callId, args) {
   sendFunctionResult(callId, output);
 }
 
-async function handleLeadTool(name, callId, args) {
+// A tool from the spec: reach, qualify, or book. Sent with the resolved lead, or
+// with none — book holds plain time on the operator's own calendar, and which
+// tools can do that is the server's to know (Provider.requires_lead), not a list
+// duplicated here. A tool that does need a lead and wasn't given one comes back
+// as a needs_lead result the model hears and acts on, same as any other outcome.
+async function handleSpecTool(name, callId, args) {
   const leadId = args.lead_id ?? activeLeadId;
-  if (!leadId) {
-    sendFunctionResult(callId, "No lead selected. Use list_leads or request_lead first.");
-    return;
+  if (leadId) {
+    activeLeadId = leadId;
+    // Acting on a lead is the agent answering the list itself, without a click.
+    collapseLeadList(leadId);
   }
-  activeLeadId = leadId;
-  // Acting on a lead is the agent answering the list itself, without a click.
-  collapseLeadList(leadId);
 
   let response;
   try {
     response = await fetch(`/api/realtime/tools/${name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec_id: specId, lead_id: leadId, args }),
+      body: JSON.stringify({ spec_id: specId, lead_id: leadId ?? null, args }),
     });
   } catch {
     sendFunctionResult(callId, "Network error running that tool.");
@@ -487,10 +490,13 @@ async function handleLeadTool(name, callId, args) {
   }
 
   sendFunctionResult(callId, result.summary);
-  if (name === "qualify" || name === "book") showLeadOutcome(leadId);
+  // Only when there was a lead: showLeadOutcome clears the panel before it
+  // fetches, so calling it for a leadless book would wipe the outcome of the
+  // lead the operator is actually working.
+  if (leadId && (name === "qualify" || name === "book")) showLeadOutcome(leadId);
 }
 
-// A real Twilio call only returns "initiated" from handleLeadTool above and
+// A real Twilio call only returns "initiated" from handleSpecTool above and
 // resolves minutes later via the media bridge. Wait on the run stream for the
 // actual reach step, then narrate it to the model so it can tell the operator
 // how the call went.

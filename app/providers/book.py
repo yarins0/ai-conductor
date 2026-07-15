@@ -16,6 +16,30 @@ from app.providers.base import CredentialGatedProvider, Provider, ToolResult, re
 GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 GOOGLE_CALENDAR_MEETING_MINUTES = 30
 DEFAULT_SLOT_DAYS_AHEAD = 1
+DEFAULT_EVENT_TITLE = "Meeting"
+
+# Said out loud rather than attempted and swallowed: Google rejects attendees
+# from a service account with 403 forbiddenForServiceAccounts ("Service accounts
+# cannot invite attendees without Domain-Wide Delegation of Authority"), and this
+# project authenticates as a service account, so the invite is not a retry away —
+# it needs user OAuth credentials. Booking a meeting the lead is never told about
+# is a real outcome, but only if it says so; claiming a meeting was set up with
+# someone who never heard about it is the same lie as an intent score no call
+# earned. Only surfaced when there is an email — with none on file there was
+# nobody to invite in the first place.
+NO_INVITE_NOTE = (
+    "The lead was not invited: this calendar is reached with a service account, "
+    "which Google does not allow to invite attendees."
+)
+
+
+def event_title(lead: LeadRecord | None, settings: dict[str, Any]) -> str:
+    """What to call the event: the model's title if it gave one, else the lead it
+    is with, else a bare label for plain time held on the operator's calendar."""
+    title = settings.get("title")
+    if title:
+        return str(title)
+    return f"Intro call with {lead.name}" if lead else DEFAULT_EVENT_TITLE
 
 
 def resolve_slot(settings: dict[str, Any]) -> datetime:
@@ -47,15 +71,22 @@ def resolve_slot(settings: dict[str, Any]) -> datetime:
 class SimulatedBookProvider(Provider):
     # Book is only reached on the qualified path (Runtime branching), so it always
     # books; it ignores sim_profile entirely.
-    async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
+    requires_lead = False  # holding plain time needs no lead; see Provider.requires_lead
+
+    async def execute(self, lead: LeadRecord | None, settings: dict[str, Any]) -> ToolResult:
         await asyncio.sleep(providers.STEP_DELAY_SECONDS)
 
         slot = resolve_slot(settings).isoformat()
+        title = event_title(lead, settings)
         return ToolResult(
             tool="book",
             status="ok",
             outcome="booked",
-            summary=f"Booked a meeting for {lead.name} at {slot}.",
+            summary=(
+                f"Booked a meeting for {lead.name} at {slot}."
+                if lead
+                else f"Booked '{title}' at {slot}."
+            ),
             data={"slot": slot},
         )
 
@@ -63,8 +94,9 @@ class SimulatedBookProvider(Provider):
 class GoogleCalendarBookProvider(CredentialGatedProvider):
     label = "Google Calendar"
     required_env = ["GOOGLE_CALENDAR_CREDENTIALS"]
+    requires_lead = False  # see SimulatedBookProvider
 
-    async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
+    async def execute(self, lead: LeadRecord | None, settings: dict[str, Any]) -> ToolResult:
         creds_path = os.environ["GOOGLE_CALENDAR_CREDENTIALS"]
         # ponytail: "primary" only works if GOOGLE_CALENDAR_CREDENTIALS is a user
         # OAuth token. A service-account key (the common case) has no usable
@@ -81,14 +113,19 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
 
         slot_start = resolve_slot(settings)
         slot_end = slot_start + timedelta(minutes=GOOGLE_CALENDAR_MEETING_MINUTES)
+        title = event_title(lead, settings)
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events",
                 headers={"Authorization": f"Bearer {credentials.token}"},
                 json={
-                    "summary": f"Intro call with {lead.name}",
-                    "description": f"Booked by ai-conductor for {lead.company}.",
+                    "summary": title,
+                    "description": (
+                        f"Booked by ai-conductor for {lead.company}."
+                        if lead
+                        else "Booked by ai-conductor."
+                    ),
                     "start": {"dateTime": slot_start.isoformat()},
                     "end": {"dateTime": slot_end.isoformat()},
                 },
@@ -96,12 +133,26 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
         response.raise_for_status()
         event = response.json()
 
+        slot = slot_start.isoformat()
+        summary = (
+            f"Booked a meeting for {lead.name} at {slot} (Google Calendar)."
+            if lead
+            else f"Booked '{title}' at {slot} (Google Calendar)."
+        )
+        if lead and lead.email:
+            summary = f"{summary} {NO_INVITE_NOTE}"
+
         return ToolResult(
             tool="book",
             status="ok",
             outcome="booked",
-            summary=f"Booked a meeting for {lead.name} at {slot_start.isoformat()} (Google Calendar).",
-            data={"slot": slot_start.isoformat(), "event_id": event["id"], "event_link": event.get("htmlLink")},
+            summary=summary,
+            data={
+                "slot": slot,
+                "event_id": event["id"],
+                "event_link": event.get("htmlLink"),
+                "invited": False,
+            },
         )
 
 

@@ -161,6 +161,38 @@ def test_model_args_cannot_overwrite_run_context(monkeypatch, spec_id, lead):
     assert stub.seen_settings["spec"] is SPEC  # the real spec object, not the forged arg
 
 
+def test_leadless_tool_runs_but_persists_nothing(monkeypatch, spec_id):
+    """book holding plain time on the operator's own calendar: a run row *is* a
+    (spec, lead) pair, so there is nothing to open one against and nothing for
+    the Company Brain to accumulate. The calendar event is its own record."""
+    stub = StubProvider(
+        result=ToolResult(tool="book", status="ok", outcome="booked", summary="Booked 'Team sync'.")
+    )
+    stub.requires_lead = False
+    _stub(monkeypatch, stub)
+
+    run_id, result = _run(tool_exec.run_tool(spec_id, SPEC, None, "book", None, {}))
+
+    assert result.outcome == "booked"
+    assert run_id is None
+    assert stub.seen_settings["run_id"] is None
+
+
+def test_tool_needing_a_lead_without_one_is_an_error_not_a_crash(monkeypatch, spec_id):
+    """reach/qualify are lead work (requires_lead defaults True), so a call with
+    no lead is a spoken outcome the model can recover from — never an exception,
+    and never a provider call."""
+    stub = StubProvider(result=ToolResult(tool="reach", status="ok", outcome="answered", summary="."))
+    _stub(monkeypatch, stub)
+
+    run_id, result = _run(tool_exec.run_tool(spec_id, SPEC, None, "reach", None, {}))
+
+    assert result.status == "error"
+    assert result.outcome == "needs_lead"
+    assert run_id is None
+    assert stub.seen_settings is None  # rejected before the provider ran
+
+
 def test_write_back_maps_outcomes():
     lead = db.create_lead("WB Lead", "WBCo", "+15550000001")
     tool_exec.write_back_lead_outcome(
