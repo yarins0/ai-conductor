@@ -62,6 +62,17 @@ class CreateLeadRequest(BaseModel):
     company: str
     phone: str
     sim_profile: str | None = None
+    email: str | None = None
+    notes: str | None = None
+
+
+class UpdateLeadRequest(BaseModel):
+    name: str | None = None
+    company: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    notes: str | None = None
+    sim_profile: str | None = None
 
 
 def spec_record_to_response(record: db.SpecRecord) -> dict:
@@ -94,6 +105,8 @@ def lead_record_to_response(record: db.LeadRecord) -> dict:
         "intent_score": record.intent_score,
         "booked_slot": record.booked_slot,
         "sim_profile": record.sim_profile,
+        "email": record.email,
+        "notes": record.notes,
     }
 
 
@@ -173,9 +186,14 @@ async def create_run(request: RunRequest) -> dict:
 
     spec = AssistantSpec.model_validate_json(spec_record.spec_json)
 
+    # Persisted per-tool settings are the baseline; an explicit per-request
+    # selection still wins. An empty settings table makes this identical to
+    # request.providers alone, so today's behavior is unchanged.
+    providers = {**db.get_provider_settings(), **(request.providers or {})}
+
     # Credential preflight: reject an unknown provider or a real one missing its
     # env vars BEFORE any run row is created, so a bad selection never strands a run.
-    preflight_error = _provider_preflight(spec, request.providers or {})
+    preflight_error = _provider_preflight(spec, providers)
     if preflight_error is not None:
         raise HTTPException(status_code=400, detail=preflight_error)
 
@@ -184,7 +202,7 @@ async def create_run(request: RunRequest) -> dict:
     # step as it goes, so the caller doesn't block on the full reach/qualify/book
     # sequence. The task set keeps a strong reference — the event loop only holds
     # weak refs, so an unreferenced task can be garbage-collected mid-run.
-    task = asyncio.create_task(runtime.execute_run(run.id, spec, lead, request.providers))
+    task = asyncio.create_task(runtime.execute_run(run.id, spec, lead, providers))
     _background_runs.add(task)
     task.add_done_callback(_background_runs.discard)
     return run_record_to_response(run)
@@ -324,13 +342,25 @@ def get_providers() -> dict:
 
 
 @app.get("/api/leads")
-def list_leads() -> list[dict]:
-    return [lead_record_to_response(record) for record in db.list_leads()]
+def list_leads(q: str | None = None) -> list[dict]:
+    leads = db.list_leads()
+    if q:
+        needle = q.lower()
+        # ponytail: in-memory filter, move to SQL if leads ever number in the thousands
+        leads = [lead for lead in leads if needle in lead.name.lower() or needle in lead.company.lower()]
+    return [lead_record_to_response(record) for record in leads]
 
 
 @app.post("/api/leads", status_code=201)
 def create_lead(request: CreateLeadRequest) -> dict:
-    record = db.create_lead(request.name, request.company, request.phone, request.sim_profile)
+    record = db.create_lead(
+        request.name,
+        request.company,
+        request.phone,
+        request.sim_profile,
+        email=request.email,
+        notes=request.notes,
+    )
     return lead_record_to_response(record)
 
 
@@ -340,6 +370,40 @@ def get_lead(lead_id: int) -> dict:
     if record is None:
         raise HTTPException(status_code=404, detail=f"No lead with id {lead_id}.")
     return lead_record_to_response(record)
+
+
+@app.patch("/api/leads/{lead_id}")
+def update_lead(lead_id: int, request: UpdateLeadRequest) -> dict:
+    fields = request.model_dump(exclude_unset=True)
+    record = db.update_lead(lead_id, **fields)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"No lead with id {lead_id}.")
+    return lead_record_to_response(record)
+
+
+@app.delete("/api/leads/{lead_id}", status_code=204)
+def delete_lead(lead_id: int) -> None:
+    if not db.delete_lead(lead_id):
+        raise HTTPException(status_code=404, detail=f"No lead with id {lead_id}.")
+
+
+@app.get("/api/settings")
+def get_settings() -> dict[str, str]:
+    persisted = db.get_provider_settings()
+    return {
+        tool: persisted.get(tool) or next(p["id"] for p in providers if p["default"])
+        for tool, providers in list_providers().items()
+    }
+
+
+@app.put("/api/settings")
+def set_settings(mapping: dict[str, str]) -> dict[str, str]:
+    for tool, provider_id in mapping.items():
+        if get_provider(tool, provider_id) is None:
+            # Unknown tool or unknown provider id for that tool — 400, nothing persisted.
+            raise HTTPException(status_code=400, detail=f"No provider '{provider_id}' for tool '{tool}'.")
+    db.set_provider_settings(mapping)
+    return get_settings()
 
 
 @app.get("/", include_in_schema=False)

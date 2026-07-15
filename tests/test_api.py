@@ -187,3 +187,90 @@ def test_live_session_missing_lead_sends_error(client):
         websocket.send_json({"type": "start", "lead_id": 999999, "providers": {}})
         message = websocket.receive_json()
         assert message["type"] == "error"
+
+
+# --- Lead CRUD (email/notes, update, delete, search) ------------------------
+
+
+def test_patch_lead_updates_notes(client):
+    lead_id = _first_lead_id()
+
+    response = client.patch(f"/api/leads/{lead_id}", json={"notes": "called back later"})
+
+    assert response.status_code == 200
+    assert response.json()["notes"] == "called back later"
+
+
+def test_patch_missing_lead_returns_404(client):
+    response = client.patch("/api/leads/999999", json={"notes": "x"})
+    assert response.status_code == 404
+
+
+def test_delete_lead_then_get_returns_404(client):
+    created = client.post(
+        "/api/leads", json={"name": "Delete Me", "company": "Gone Inc", "phone": "+1-555-0199"}
+    )
+    lead_id = created.json()["id"]
+
+    delete_response = client.delete(f"/api/leads/{lead_id}")
+    assert delete_response.status_code == 204
+
+    assert client.get(f"/api/leads/{lead_id}").status_code == 404
+
+
+def test_delete_missing_lead_returns_404(client):
+    response = client.delete("/api/leads/999999")
+    assert response.status_code == 404
+
+
+def test_list_leads_filters_by_name_and_company_case_insensitive(client):
+    created = client.post(
+        "/api/leads", json={"name": "Zelda Zephyr", "company": "Acme Rockets", "phone": "+1-555-0200"}
+    )
+
+    by_name = client.get("/api/leads", params={"q": "zelda"})
+    assert any(lead["name"] == "Zelda Zephyr" for lead in by_name.json())
+
+    by_company = client.get("/api/leads", params={"q": "ROCKETS"})
+    assert any(lead["company"] == "Acme Rockets" for lead in by_company.json())
+
+    no_match = client.get("/api/leads", params={"q": "nonexistent-needle"})
+    assert no_match.json() == []
+
+    # Other test modules share this DB and assert an exact seeded-lead count;
+    # clean up so this test doesn't leak a row past its own scope.
+    client.delete(f"/api/leads/{created.json()['id']}")
+
+
+# --- Provider settings --------------------------------------------------
+
+
+def test_get_settings_returns_registry_defaults_on_empty_table(client):
+    response = client.get("/api/settings")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reach"] == "sim"
+    assert body["qualify"] == "sim"
+    assert body["book"] == "sim"
+
+
+def test_put_settings_persists_and_survives_fresh_get(client):
+    put_response = client.put("/api/settings", json={"reach": "twilio"})
+
+    assert put_response.status_code == 200
+    assert put_response.json()["reach"] == "twilio"
+
+    fresh = client.get("/api/settings")
+    assert fresh.json()["reach"] == "twilio"
+
+
+def test_put_settings_unknown_provider_returns_400_and_persists_nothing(client):
+    before = client.get("/api/settings").json()
+
+    response = client.put("/api/settings", json={"reach": "not-a-real-provider"})
+
+    assert response.status_code == 400
+    # Nothing persisted: settings are exactly what they were before this call
+    # (a prior test in this module may have already set a non-default value).
+    assert client.get("/api/settings").json() == before

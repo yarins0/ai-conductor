@@ -4,6 +4,7 @@ ORM (rather than raw SQL) keeps the later SQLite -> Postgres swap trivial,
 per the project's settled persistence decision.
 """
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -44,6 +45,8 @@ class LeadRecord(SQLModel, table=True):
     # persona (app/sim_lead.py), so its outcome is earned from the call rather than
     # predetermined.
     sim_profile: str | None = None
+    email: str | None = None
+    notes: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -65,9 +68,30 @@ class RunStepRecord(SQLModel, table=True):
     created_at: datetime
 
 
+class SettingsRecord(SQLModel, table=True):
+    # Generic key-value so the 3-tool provider set isn't baked into the schema;
+    # provider selections are stored as key=f"provider:{tool}".
+    key: str = Field(primary_key=True)
+    value: str
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    _ensure_lead_columns()
     seed_leads()  # demo needs inspectable leads on first boot; idempotent so restarts don't duplicate
+
+
+def _ensure_lead_columns() -> None:
+    # SQLite has no migration framework here; a new nullable column is the one
+    # ALTER TABLE it supports without a rebuild-and-copy (see DECISIONS.md for the
+    # rebuild pain a NOT NULL column change caused). Idempotent: only runs the
+    # ALTER when PRAGMA table_info shows the column missing, so every boot is safe.
+    with engine.connect() as conn:
+        existing_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(leadrecord)")}
+        for column in ("email", "notes"):
+            if column not in existing_columns:
+                conn.exec_driver_sql(f"ALTER TABLE leadrecord ADD COLUMN {column} TEXT")
+        conn.commit()
 
 
 def save_spec(spec: AssistantSpec) -> SpecRecord:
@@ -169,13 +193,22 @@ def create_run(spec_id: int, lead_id: int) -> RunRecord:
         return record
 
 
-def create_lead(name: str, company: str, phone: str, sim_profile: str | None = None) -> LeadRecord:
+def create_lead(
+    name: str,
+    company: str,
+    phone: str,
+    sim_profile: str | None = None,
+    email: str | None = None,
+    notes: str | None = None,
+) -> LeadRecord:
     now = datetime.now(timezone.utc)
     record = LeadRecord(
         name=name,
         company=company,
         phone=phone,
         sim_profile=sim_profile,
+        email=email,
+        notes=notes,
         created_at=now,
         updated_at=now,
     )
@@ -184,6 +217,86 @@ def create_lead(name: str, company: str, phone: str, sim_profile: str | None = N
         session.commit()
         session.refresh(record)
         return record
+
+
+def update_lead(lead_id: int, **fields) -> LeadRecord | None:
+    # Only overwrites keys actually present in `fields` — the caller (the PATCH
+    # handler) passes just the fields the client set, so an omitted field is
+    # left untouched rather than clobbered with None.
+    with Session(engine) as session:
+        lead = session.get(LeadRecord, lead_id)
+        if lead is None:
+            return None
+        for key, value in fields.items():
+            setattr(lead, key, value)
+        lead.updated_at = datetime.now(timezone.utc)
+        session.add(lead)
+        session.commit()
+        session.refresh(lead)
+        return lead
+
+
+def delete_lead(lead_id: int) -> bool:
+    # No FK constraints exist anywhere in this schema, so a run row referencing
+    # this lead may dangle after delete — consistent with the rest of the schema.
+    with Session(engine) as session:
+        lead = session.get(LeadRecord, lead_id)
+        if lead is None:
+            return False
+        session.delete(lead)
+        session.commit()
+        return True
+
+
+def get_provider_settings() -> dict[str, str]:
+    prefix = "provider:"
+    with Session(engine) as session:
+        statement = select(SettingsRecord).where(SettingsRecord.key.startswith(prefix))
+        rows = session.exec(statement).all()
+        return {row.key[len(prefix):]: row.value for row in rows}
+
+
+def set_provider_settings(mapping: dict[str, str]) -> None:
+    # Merge semantics: only the keys present in `mapping` are written; any other
+    # tool's persisted selection is left as-is.
+    with Session(engine) as session:
+        for tool, provider_id in mapping.items():
+            key = f"provider:{tool}"
+            record = session.get(SettingsRecord, key)
+            if record is None:
+                record = SettingsRecord(key=key, value=provider_id)
+            else:
+                record.value = provider_id
+            session.add(record)
+        session.commit()
+
+
+def get_or_create_run(spec_id: int, lead_id: int) -> RunRecord:
+    with Session(engine) as session:
+        statement = (
+            select(RunRecord)
+            .where(
+                RunRecord.spec_id == spec_id,
+                RunRecord.lead_id == lead_id,
+                RunRecord.status == "running",
+            )
+            .order_by(RunRecord.created_at.desc(), RunRecord.id.desc())
+        )
+        existing = session.exec(statement).first()
+        if existing is not None:
+            return existing
+    return create_run(spec_id, lead_id)
+
+
+def latest_transcript_for_run(run_id: int) -> list | None:
+    # Newest-first scan for the most recent step that actually carried a
+    # transcript (reach); a later tool's own step never has one.
+    for step in reversed(list_run_steps(run_id)):
+        result = json.loads(step.result_json)
+        transcript = result.get("data", {}).get("transcript")
+        if transcript:
+            return transcript
+    return None
 
 
 def get_run(run_id: int) -> RunRecord | None:
