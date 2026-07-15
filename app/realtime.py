@@ -69,11 +69,15 @@ async def _openai_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
-def _load_spec(spec_id: int) -> AssistantSpec:
+def _load_spec_record(spec_id: int) -> db.SpecRecord:
     record = db.get_spec(spec_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"No spec with id {spec_id}.")
-    return AssistantSpec.model_validate_json(record.spec_json)
+    return record
+
+
+def _load_spec(spec_id: int) -> AssistantSpec:
+    return AssistantSpec.model_validate_json(_load_spec_record(spec_id).spec_json)
 
 
 @router.post("/token")
@@ -81,7 +85,8 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
     """Mint an ephemeral client secret for one operator session, configured with
     the spec's instructions and exactly its allowed tools. The browser uses it
     to open the WebRTC session; it expires on its own, so nothing to revoke."""
-    spec = _load_spec(request.spec_id)
+    record = _load_spec_record(request.spec_id)
+    spec = AssistantSpec.model_validate_json(record.spec_json)
     payload = {
         "session": {
             "type": "realtime",
@@ -98,7 +103,16 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
         }
     }
     data = await _openai_post("/realtime/client_secrets", payload)
-    return {"value": data.get("value"), "model": REALTIME_MODEL}
+    return {
+        "value": data.get("value"),
+        "model": REALTIME_MODEL,
+        # The instructions and tools above are frozen into the session from here
+        # on — nothing updates them mid-call. Handing back the exact version they
+        # came from lets the browser notice the spec moving on without it, and
+        # reading it off the same record the payload was built from means an edit
+        # landing during this request can't slip through the gap.
+        "spec_version": record.updated_at.isoformat(),
+    }
 
 
 @router.post("/tools/{tool_name}")

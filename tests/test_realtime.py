@@ -46,13 +46,37 @@ def test_token_scopes_tools_to_spec(client, fake_openai_http):
     response = client.post("/api/realtime/token", json={"spec_id": record.id})
 
     assert response.status_code == 200
-    assert response.json() == {"value": "ek_test", "model": "gpt-realtime"}
+    assert response.json() == {
+        "value": "ek_test",
+        "model": "gpt-realtime",
+        # The version the frozen tools below came from — the browser polls
+        # against this to notice the spec being edited out from under it.
+        "spec_version": record.updated_at.isoformat(),
+    }
     (_, payload), = calls
     tool_names = [tool["name"] for tool in payload["session"]["tools"]]
     # Only the spec's tools plus the three universal conversation functions —
     # a book-only assistant must not be offered reach or qualify.
     assert tool_names == ["book", "list_leads", "request_lead", "web_search"]
     assert "Booker" in payload["session"]["instructions"]
+
+
+def test_token_spec_version_tracks_edits_and_matches_the_polled_field(client, fake_openai_http):
+    """The spec-drift notice rests entirely on these two agreeing: the token's
+    spec_version is the baseline, and GET /api/specs/{id}.updated_at is what the
+    browser polls against it. If an edit failed to move that field, or the two
+    endpoints serialized it differently, the session would never notice it had
+    gone stale — and the failure would be silent, which is the bug being fixed."""
+    fake_openai_http({"client_secrets": {"value": "ek_test"}})
+    record = db.save_spec(BOOK_ONLY_SPEC)
+    minted = client.post("/api/realtime/token", json={"spec_id": record.id})
+    before = minted.json()["spec_version"]
+
+    db.update_spec(record.id, BOOK_ONLY_SPEC)  # content is irrelevant; the edit is the event
+
+    after = client.post("/api/realtime/token", json={"spec_id": record.id}).json()["spec_version"]
+    assert after != before
+    assert client.get(f"/api/specs/{record.id}").json()["updated_at"] == after
 
 
 def test_token_missing_spec_returns_404(client, fake_openai_http):

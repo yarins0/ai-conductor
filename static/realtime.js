@@ -10,6 +10,7 @@
 const connectBtn = document.getElementById("connectBtn");
 const micMuteBtn = document.getElementById("micMuteBtn");
 const voiceStatusEl = document.getElementById("voiceStatus");
+const specNoticeEl = document.getElementById("specNotice");
 const transcriptEl = document.getElementById("transcript");
 const assistantAudioEl = document.getElementById("assistantAudio");
 
@@ -75,6 +76,71 @@ function sendFunctionResult(callId, output) {
     },
   });
   requestResponse();
+}
+
+// --- Spec drift ---------------------------------------------------------------
+//
+// The session's instructions and tools are frozen into the ephemeral token when
+// it is minted (app/realtime.py mint_token) and nothing updates them afterwards,
+// while the Builder can edit the same spec in another window at any moment. The
+// two then disagree, and the worse direction is the silent one: a tool ADDED
+// mid-session is simply invisible to the model — no error, nothing to notice,
+// just an assistant that never uses what it was given. (A tool REMOVED at least
+// announces itself, since the call reaches the server and run_tool rejects it.)
+//
+// So: notice, and say so. This deliberately does not push a session.update to
+// fix it live — the spec is the source of truth and a session quietly running a
+// different one should be visible, not patched over.
+//
+// ponytail: polling, not SSE. A human editing a spec is not a high-frequency
+// event, and 5s of staleness costs nothing against a notice that only asks the
+// operator to reconnect.
+const SPEC_POLL_MS = 5000;
+let specVersion = null; // spec updated_at this session's token was minted from
+let specPollTimer = null;
+
+function startSpecPoll() {
+  stopSpecPoll();
+  specPollTimer = setInterval(checkSpecVersion, SPEC_POLL_MS);
+}
+
+function stopSpecPoll() {
+  clearInterval(specPollTimer);
+  specPollTimer = null;
+}
+
+async function checkSpecVersion() {
+  if (!specVersion) return;
+  let spec;
+  try {
+    const res = await fetch(`/api/specs/${specId}`);
+    if (!res.ok) return; // a 404/500 is not evidence the spec changed
+    spec = await res.json();
+  } catch {
+    return; // offline: stay quiet rather than cry wolf about an edit nobody made
+  }
+  if (spec.updated_at === specVersion) return;
+  stopSpecPoll(); // said once — the notice stands until it's acted on
+  showSpecNotice();
+}
+
+function showSpecNotice() {
+  specNoticeEl.replaceChildren(
+    el("div", { className: "spec-notice" }, [
+      el("span", {}, [
+        "This assistant was edited. The live session is still running the version it started with.",
+      ]),
+      el("button", { onclick: reconnect }, ["Reconnect to apply"]),
+    ]),
+  );
+}
+
+// The notice has to be actionable: Connect is disabled for the life of a
+// session, so without this the only way to pick up an edit is reloading the page.
+async function reconnect() {
+  specNoticeEl.replaceChildren();
+  handleDisconnect();
+  await connect();
 }
 
 // --- Connect / disconnect ----------------------------------------------------
@@ -155,9 +221,16 @@ async function connect() {
   connectBtn.textContent = "Connected";
   micMuteBtn.disabled = false;
   setStatus("Connected — start talking.");
+
+  // Only now: the token minted above is what froze this session's tools, so it
+  // is the baseline to compare against, and there is no session to be stale
+  // until the handshake actually succeeds.
+  specVersion = tokenData.spec_version;
+  startSpecPoll();
 }
 
 function handleDisconnect() {
+  stopSpecPoll();
   setStatus("Disconnected.");
   connectBtn.disabled = false;
   connectBtn.textContent = "Connect";
