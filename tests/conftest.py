@@ -14,6 +14,7 @@ _db_file.close()
 os.environ["AI_CONDUCTOR_DB"] = "sqlite:///" + _db_file.name.replace("\\", "/")
 
 import anthropic  # noqa: E402
+import httpx  # noqa: E402
 import pytest  # noqa: E402
 
 from app.db import init_db  # noqa: E402  (must follow the env var assignment above)
@@ -87,5 +88,39 @@ def fake_anthropic(monkeypatch: pytest.MonkeyPatch):
         client = FakeClient(responses)
         monkeypatch.setattr(anthropic, "AsyncAnthropic", lambda *a, **k: client)
         return client
+
+    return _install
+
+
+# --- Shared OpenAI HTTP fake ---------------------------------------------------
+#
+# The realtime control plane (app/realtime.py) calls OpenAI over raw httpx REST
+# (no SDK), so the fake patches httpx.AsyncClient.post itself, keyed by URL
+# substring. Same contract as fake_anthropic: no network, no key, no cost. The
+# sync TestClient is unaffected (it subclasses httpx.Client, not AsyncClient).
+
+
+@pytest.fixture
+def fake_openai_http(monkeypatch: pytest.MonkeyPatch):
+    """Install canned JSON responses for OpenAI REST calls.
+
+    `_install({"client_secrets": {...}, "responses": {...}})` maps a URL
+    substring to the JSON body returned for it; an unmapped URL fails the test
+    loudly (a silent real call is exactly the bug this exists to prevent).
+    Returns a list of (url, json_payload) tuples for request assertions.
+    """
+
+    def _install(responses: dict[str, dict]) -> list[tuple[str, dict]]:
+        calls: list[tuple[str, dict]] = []
+
+        async def _post(self, url, **kwargs):
+            calls.append((str(url), kwargs.get("json", {})))
+            for key, body in responses.items():
+                if key in str(url):
+                    return httpx.Response(200, json=body)
+            raise AssertionError(f"unexpected outbound HTTP call in test: {url}")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", _post)
+        return calls
 
     return _install
