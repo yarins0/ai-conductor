@@ -27,7 +27,7 @@ TERMINAL_RUN_STATUSES = ("completed", "failed")
 # read the environment at import time.
 load_dotenv("secrets/.env")
 
-from app import builder, db, live_agent, realtime, runtime  # noqa: E402
+from app import builder, db, live_agent, realtime, realtime_bridge, runtime  # noqa: E402
 from app.spec import AssistantSpec  # noqa: E402
 from app.providers import ProviderConfigError, get_provider, list_providers  # noqa: E402
 
@@ -39,6 +39,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="AI Conductor", lifespan=lifespan)
 app.include_router(realtime.router)
+app.include_router(realtime_bridge.router)
 
 # Strong references to in-flight run tasks (see create_run).
 _background_runs: set[asyncio.Task] = set()

@@ -70,24 +70,37 @@ class TwilioReachProvider(CredentialGatedProvider):
         account_sid = os.environ["TWILIO_ACCOUNT_SID"]
         auth_token = os.environ["TWILIO_AUTH_TOKEN"]
         from_number = os.environ["TWILIO_FROM_NUMBER"]
-        # Twilio needs TwiML (what the call says/does) at a reachable URL. Falls back to
-        # Twilio's own public demo greeting so this works with zero extra setup.
-        twiml_url = settings.get("twiml_url", "http://demo.twilio.com/docs/voice.xml")
+
+        run_id = settings.get("run_id")
+        public_base_url = os.getenv("PUBLIC_BASE_URL")
+        data = {"To": lead.phone, "From": from_number}
+        if run_id and public_base_url:
+            # The bridge (app/realtime_bridge.py) needs a run to look up the spec
+            # and lead for the call it answers, and the status callback needs one
+            # to persist a no-answer/busy/failed outcome — both only reachable
+            # once this server itself is reachable from Twilio (PUBLIC_BASE_URL).
+            data["Url"] = settings.get("twiml_url", f"{public_base_url}/twilio/voice/{run_id}")
+            data["StatusCallback"] = f"{public_base_url}/twilio/status/{run_id}"
+            data["StatusCallbackEvent"] = "completed no-answer busy failed"
+        else:
+            # No run/public URL to bridge through: Twilio's own public demo
+            # greeting so this still works with zero extra setup.
+            data["Url"] = settings.get("twiml_url", "http://demo.twilio.com/docs/voice.xml")
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json",
                 auth=(account_sid, auth_token),
-                data={"To": lead.phone, "From": from_number, "Url": twiml_url},
+                data=data,
             )
         response.raise_for_status()
         call = response.json()
 
-        # ponytail: Twilio calls are async — whether it's actually answered only
-        # arrives later via a status-callback webhook, which this project doesn't
-        # have an endpoint for. "initiated" reports the call was placed; add a
-        # /webhooks/twilio endpoint + look up call.sid there if a synchronous
-        # answered/no_answer outcome is needed.
+        # Twilio calls are async: "initiated" reports the call was placed. The
+        # durable answered/no_answer outcome comes back later via one of two side
+        # channels — /twilio/status (busy/no-answer/failed) or /twilio/stream (a
+        # live bridge into OpenAI Realtime once someone picks up) — both of which
+        # persist the actual reach step this call doesn't have yet.
         return ToolResult(
             tool="reach",
             status="ok",

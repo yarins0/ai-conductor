@@ -72,6 +72,8 @@ def _assistant_system_prompt(spec: AssistantSpec, lead: LeadRecord) -> str:
     if spec.instructions:
         lines.append("Follow these instructions:")
         lines.extend(f"- {instruction}" for instruction in spec.instructions)
+    if lead.notes:
+        lines.append(f"Notes on this lead: {lead.notes}")
     lines.append(
         "This is real speech. One or two sentences per turn, no monologues, no "
         "stage directions, no narrating what you are doing. You have roughly "
