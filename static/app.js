@@ -237,3 +237,229 @@ wirePanelToggle("sidebarToggle", "sidebar", "›", "‹");
 logEl.appendChild(el("div", { className: "empty-hint", id: "emptyHint" }, ["Describe the assistant you want and hit Create to get started."]));
 
 loadSpecs();
+
+// --- Leads dialog ------------------------------------------------------
+
+const leadsDialog = document.getElementById("leadsDialog");
+const leadsTableBody = document.getElementById("leadsTableBody");
+const leadsDialogError = document.getElementById("leadsDialogError");
+
+// sim_profile values the backend accepts; wording matches session.html's add-lead form.
+const SIM_PROFILES = [
+  { value: "", label: "no profile — real lead" },
+  { value: "books", label: "simulate: books" },
+  { value: "no_answer", label: "simulate: no_answer" },
+  { value: "not_qualified", label: "simulate: not_qualified" },
+];
+
+function buildSimProfileSelect(currentValue) {
+  const select = el("select", {}, SIM_PROFILES.map((profile) => el("option", { value: profile.value }, [profile.label])));
+  select.value = currentValue || "";
+  return select;
+}
+
+// One editable row per lead: plain inputs bound to its current values, Save
+// (PATCH just this row) and Delete actions.
+function buildLeadRow(lead) {
+  const fields = {
+    name: el("input", { type: "text", value: lead.name || "" }),
+    company: el("input", { type: "text", value: lead.company || "" }),
+    phone: el("input", { type: "text", value: lead.phone || "" }),
+    email: el("input", { type: "text", value: lead.email || "" }),
+    notes: el("input", { type: "text", value: lead.notes || "" }),
+  };
+  const simSelect = buildSimProfileSelect(lead.sim_profile);
+
+  const saveBtn = el("button", {
+    onclick: () => saveLeadRow(lead.id, {
+      name: fields.name.value,
+      company: fields.company.value,
+      phone: fields.phone.value,
+      email: fields.email.value || null,
+      notes: fields.notes.value || null,
+      sim_profile: simSelect.value || null,
+    }),
+  }, ["Save"]);
+  // ponytail: no confirm dialog — leads are low-stakes dev data here.
+  const deleteBtn = el("button", { onclick: () => deleteLeadRow(lead.id) }, ["Delete"]);
+
+  return el("tr", {}, [
+    el("td", {}, [fields.name]),
+    el("td", {}, [fields.company]),
+    el("td", {}, [fields.phone]),
+    el("td", {}, [fields.email]),
+    el("td", {}, [simSelect]),
+    el("td", {}, [fields.notes]),
+    el("td", {}, [saveBtn, deleteBtn]),
+  ]);
+}
+
+// Trailing empty row for adding a new lead. The Add button stays disabled
+// until a name is entered — it's the only required field.
+function buildAddLeadRow() {
+  const fields = {
+    name: el("input", { type: "text", placeholder: "Name" }),
+    company: el("input", { type: "text", placeholder: "Company" }),
+    phone: el("input", { type: "text", placeholder: "Phone" }),
+    email: el("input", { type: "text", placeholder: "Email" }),
+    notes: el("input", { type: "text", placeholder: "Notes" }),
+  };
+  const simSelect = buildSimProfileSelect("");
+
+  const addBtn = el("button", { disabled: "" }, ["Add lead"]);
+  fields.name.addEventListener("input", () => {
+    addBtn.disabled = fields.name.value.trim() === "";
+  });
+  addBtn.addEventListener("click", () => addLead({
+    name: fields.name.value.trim(),
+    company: fields.company.value,
+    phone: fields.phone.value,
+    email: fields.email.value || null,
+    notes: fields.notes.value || null,
+    sim_profile: simSelect.value || null,
+  }));
+
+  return el("tr", {}, [
+    el("td", {}, [fields.name]),
+    el("td", {}, [fields.company]),
+    el("td", {}, [fields.phone]),
+    el("td", {}, [fields.email]),
+    el("td", {}, [simSelect]),
+    el("td", {}, [fields.notes]),
+    el("td", {}, [addBtn]),
+  ]);
+}
+
+function renderLeadsTable(leads) {
+  leadsTableBody.textContent = "";
+  leads.forEach((lead) => leadsTableBody.appendChild(buildLeadRow(lead)));
+  leadsTableBody.appendChild(buildAddLeadRow());
+}
+
+// Re-fetches and re-renders the leads table in place (dialog stays open).
+async function loadLeadsTable() {
+  try {
+    const res = await fetch("/api/leads");
+    if (res.ok) {
+      renderLeadsTable(await res.json());
+      leadsDialogError.textContent = "";
+    } else {
+      leadsDialogError.textContent = "Could not load leads.";
+    }
+  } catch {
+    leadsDialogError.textContent = "Network error — could not reach the server.";
+  }
+}
+
+// Opens with fresh data every time so the dialog never shows a stale list.
+function openLeadsDialog() {
+  loadLeadsTable();
+  leadsDialog.showModal();
+}
+
+async function saveLeadRow(id, patch) {
+  try {
+    const res = await fetch(`/api/leads/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) await loadLeadsTable();
+    else leadsDialogError.textContent = "Could not save that lead.";
+  } catch {
+    leadsDialogError.textContent = "Network error — could not reach the server.";
+  }
+}
+
+async function deleteLeadRow(id) {
+  try {
+    const res = await fetch(`/api/leads/${id}`, { method: "DELETE" });
+    if (res.ok) await loadLeadsTable();
+    else leadsDialogError.textContent = "Could not delete that lead.";
+  } catch {
+    leadsDialogError.textContent = "Network error — could not reach the server.";
+  }
+}
+
+async function addLead(lead) {
+  try {
+    const res = await fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lead),
+    });
+    if (res.status === 201) await loadLeadsTable();
+    else leadsDialogError.textContent = "Could not add that lead.";
+  } catch {
+    leadsDialogError.textContent = "Network error — could not reach the server.";
+  }
+}
+
+// --- Settings dialog -----------------------------------------------------
+
+const settingsDialog = document.getElementById("settingsDialog");
+const settingsForm = document.getElementById("settingsForm");
+const settingsDialogError = document.getElementById("settingsDialogError");
+
+function renderSettingsForm(providers, current) {
+  settingsForm.textContent = "";
+  Object.entries(providers).forEach(([toolName, options]) => {
+    const select = el("select", { "data-tool": toolName },
+      options.map((option) => el("option", { value: option.id }, [option.label])));
+    const defaultOption = options.find((option) => option.default);
+    select.value = current[toolName] || (defaultOption ? defaultOption.id : "");
+    settingsForm.appendChild(el("div", { className: "provider-row" }, [
+      el("label", {}, [toolName]),
+      select,
+    ]));
+  });
+}
+
+// Opens with fresh data every time so selections reflect whatever was saved
+// last, from this tab or another.
+async function openSettingsDialog() {
+  settingsDialogError.textContent = "";
+  try {
+    const [providersRes, settingsRes] = await Promise.all([
+      fetch("/api/providers"),
+      fetch("/api/settings"),
+    ]);
+    renderSettingsForm(
+      providersRes.ok ? await providersRes.json() : {},
+      settingsRes.ok ? await settingsRes.json() : {},
+    );
+  } catch {
+    settingsForm.textContent = "";
+    settingsDialogError.textContent = "Network error — could not reach the server.";
+  }
+  settingsDialog.showModal();
+}
+
+async function saveSettings() {
+  const payload = {};
+  settingsForm.querySelectorAll("select[data-tool]").forEach((select) => {
+    payload[select.dataset.tool] = select.value;
+  });
+  try {
+    const res = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      settingsDialogError.textContent = "";
+      settingsDialog.close();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      settingsDialogError.textContent = data.detail || "Could not save settings.";
+    }
+  } catch {
+    settingsDialogError.textContent = "Network error — could not reach the server.";
+  }
+}
+
+document.getElementById("manageLeadsBtn").addEventListener("click", openLeadsDialog);
+document.getElementById("settingsBtn").addEventListener("click", openSettingsDialog);
+document.getElementById("closeLeadsDialogBtn").addEventListener("click", () => leadsDialog.close());
+document.getElementById("closeSettingsDialogBtn").addEventListener("click", () => settingsDialog.close());
+document.getElementById("saveSettingsBtn").addEventListener("click", saveSettings);

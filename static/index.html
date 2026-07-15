@@ -208,6 +208,113 @@
   #composer button:disabled { opacity: .5; cursor: not-allowed; }
   /* Edit mode swaps the filled primary for an accent outline — the color reinforces the mode alongside the label. */
   #actionBtn.editing { background: var(--panel); border: 1px solid var(--accent); color: var(--accent); }
+
+  /* Sidebar actions: separated from the assistants list with a divider so the
+     two buttons read as their own group, not more list items. */
+  #sidebarActions {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #sidebarActions button {
+    width: 100%;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  #sidebarActions button:hover { border-color: var(--accent); background: var(--panel); }
+
+  /* Dialogs: native <dialog> gets the same panel/border treatment as the rest
+     of the page, plus a dimmed backdrop (free with ::backdrop). */
+  dialog {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    width: 100%;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .5); }
+  dialog h2 { margin: 0 0 14px; font-size: 16px; }
+  #leadsDialog { max-width: 720px; }
+  #settingsDialog { max-width: 420px; }
+  .dialog-wrap { overflow-x: auto; }
+  .dialog-error { color: var(--danger); font-size: 13px; margin-top: 10px; }
+  .dialog-error:empty { display: none; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .dialog-actions button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .dialog-actions button:disabled { opacity: .5; cursor: not-allowed; }
+  .dialog-actions .secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+
+  #leadsTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #leadsTable th {
+    text-align: left;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  #leadsTable td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  #leadsTable input, #leadsTable select {
+    width: 100%;
+    min-width: 90px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 13px;
+  }
+  #leadsTable td:last-child { white-space: nowrap; }
+  #leadsTable td:last-child button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    margin-right: 4px;
+  }
+  #leadsTable td:last-child button:hover { border-color: var(--accent); }
+  #leadsTable td:last-child button:disabled { opacity: .5; cursor: not-allowed; }
+
+  #settingsForm .provider-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  #settingsForm label { flex: 0 0 100px; color: var(--muted); font-size: 12px; text-transform: capitalize; }
+  #settingsForm select {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
 </style>
 
 <div id="sidebar">
@@ -217,6 +324,10 @@
   </div>
   <button id="newAssistantBtn" class="new-assistant-btn">+ New assistant</button>
   <div id="specList"></div>
+  <div id="sidebarActions">
+    <button id="manageLeadsBtn">Manage leads</button>
+    <button id="settingsBtn">Settings</button>
+  </div>
 </div>
 
 <div id="main">
@@ -230,5 +341,33 @@
     <button id="actionBtn">Create</button>
   </div>
 </div>
+
+<dialog id="leadsDialog">
+  <h2>Leads</h2>
+  <div class="dialog-wrap">
+    <table id="leadsTable">
+      <thead>
+        <tr>
+          <th>Name</th><th>Company</th><th>Phone</th><th>Email</th><th>Sim profile</th><th>Notes</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="leadsTableBody"></tbody>
+    </table>
+  </div>
+  <div id="leadsDialogError" class="dialog-error"></div>
+  <div class="dialog-actions">
+    <button type="button" id="closeLeadsDialogBtn" class="secondary">Close</button>
+  </div>
+</dialog>
+
+<dialog id="settingsDialog">
+  <h2>Providers</h2>
+  <div id="settingsForm"></div>
+  <div id="settingsDialogError" class="dialog-error"></div>
+  <div class="dialog-actions">
+    <button type="button" id="closeSettingsDialogBtn" class="secondary">Close</button>
+    <button type="button" id="saveSettingsBtn">Save</button>
+  </div>
+</dialog>
 
 <script src="/static/app.js"></script>
