@@ -14,6 +14,7 @@ bridged to OpenAI's Responses API because the Realtime API has function calling
 but not the built-in web_search tool.
 """
 
+from datetime import datetime
 from typing import Any
 
 from app.spec import AssistantSpec
@@ -78,7 +79,13 @@ REALTIME_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "properties": {
                 "preferred_time": {
                     "type": "string",
-                    "description": "Optional meeting time the lead requested, in plain text.",
+                    "description": (
+                        "The agreed meeting time as an ISO 8601 timestamp with a UTC "
+                        "offset, e.g. 2026-07-16T09:00:00+03:00. Resolve relative "
+                        "wording like 'tomorrow at 9' against the current date and "
+                        "time given in your instructions — never send the words "
+                        "themselves. Omit only if no time was actually agreed."
+                    ),
                 },
                 "lead_id": {
                     "type": "integer",
@@ -199,5 +206,14 @@ def operator_instructions(spec: AssistantSpec) -> str:
         "what was said on a call, and never claim a tool's result before you "
         "have actually called it. Pass the lead_id you resolved via list_leads "
         "when calling reach, qualify, or book."
+    )
+    # A scheduling assistant that does not know today's date cannot resolve
+    # "tomorrow at 9", and the model has no clock of its own. Local time with an
+    # offset, not UTC: the operator says "9am" meaning their own 9am, and book
+    # wants that back as an exact instant. Frozen for the session like the rest
+    # of these instructions — a session still running tomorrow would resolve
+    # "tomorrow" against the wrong day, which reconnecting fixes.
+    lines.append(
+        f"The current date and time is {datetime.now().astimezone().isoformat(timespec='minutes')}."
     )
     return "\n".join(lines)

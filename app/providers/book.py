@@ -15,6 +15,33 @@ from app.providers.base import CredentialGatedProvider, Provider, ToolResult, re
 
 GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 GOOGLE_CALENDAR_MEETING_MINUTES = 30
+DEFAULT_SLOT_DAYS_AHEAD = 1
+
+
+def resolve_slot(settings: dict[str, Any]) -> datetime:
+    """The meeting time the conversation actually agreed on.
+
+    `preferred_time` arrives as an ISO 8601 string the model resolved against the
+    current time in its instructions — it used to be free text, and every
+    provider ignored it and booked now + 1 day, so an assistant could agree to
+    "tomorrow at 9" out loud and put 6pm in the calendar. Shared by both
+    providers so the simulated and real paths cannot disagree about when a
+    meeting is.
+
+    Falls back to +1 day for a book with no time agreed. Anything unparseable
+    takes the same fallback rather than raising: the meeting is real and already
+    agreed, so a bad timestamp should cost the right hour, not the booking.
+    """
+    raw = settings.get("preferred_time")
+    if raw:
+        try:
+            slot = datetime.fromisoformat(str(raw))
+            # A naive timestamp means the model omitted the offset; the operator
+            # meant their own wall clock, which is this machine's.
+            return slot if slot.tzinfo else slot.astimezone()
+        except (TypeError, ValueError):
+            pass
+    return datetime.now(timezone.utc) + timedelta(days=DEFAULT_SLOT_DAYS_AHEAD)
 
 
 class SimulatedBookProvider(Provider):
@@ -23,7 +50,7 @@ class SimulatedBookProvider(Provider):
     async def execute(self, lead: LeadRecord, settings: dict[str, Any]) -> ToolResult:
         await asyncio.sleep(providers.STEP_DELAY_SECONDS)
 
-        slot = "2026-07-15T10:00:00"
+        slot = resolve_slot(settings).isoformat()
         return ToolResult(
             tool="book",
             status="ok",
@@ -52,7 +79,7 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
         # one request; wrap in asyncio.to_thread if this path needs real concurrency.
         credentials.refresh(GoogleAuthRequest())
 
-        slot_start = datetime.now(timezone.utc) + timedelta(days=1)
+        slot_start = resolve_slot(settings)
         slot_end = slot_start + timedelta(minutes=GOOGLE_CALENDAR_MEETING_MINUTES)
 
         async with httpx.AsyncClient() as client:

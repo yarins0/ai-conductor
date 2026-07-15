@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from conftest import Response, text_block, tool_block
@@ -7,6 +7,7 @@ from conftest import Response, text_block, tool_block
 import app.providers as providers
 from app.db import LeadRecord
 from app.providers import get_provider
+from app.providers.book import resolve_slot
 from app.spec import AssistantSpec, ToolConfig
 
 SAMPLE_SPEC = AssistantSpec(
@@ -43,6 +44,53 @@ def test_registry_has_reach_qualify_book_registered() -> None:
     assert get_provider("reach") is not None
     assert get_provider("qualify") is not None
     assert get_provider("book") is not None
+
+
+# --- book slot resolution ------------------------------------------------------
+#
+# The regression: preferred_time was free text and every provider ignored it,
+# booking now + 1 day. The assistant could agree to "tomorrow at 9" out loud
+# while the calendar got 6pm — and the summary reported the wrong time honestly,
+# so only the calendar itself gave it away.
+
+
+def test_resolve_slot_honours_an_agreed_time() -> None:
+    slot = resolve_slot({"preferred_time": "2026-07-16T09:00:00+03:00"})
+
+    assert slot.isoformat() == "2026-07-16T09:00:00+03:00"
+
+
+def test_resolve_slot_treats_a_naive_time_as_local() -> None:
+    """The model dropping the offset must not silently become UTC — 9am to an
+    operator means 9am where they are."""
+    slot = resolve_slot({"preferred_time": "2026-07-16T09:00:00"})
+
+    assert slot.tzinfo is not None
+    assert (slot.hour, slot.minute) == (9, 0)
+    assert slot.utcoffset() == datetime.now().astimezone().utcoffset()
+
+
+@pytest.mark.parametrize("raw", [None, "", "tomorrow at nine", "not-a-timestamp"])
+def test_resolve_slot_falls_back_a_day_ahead_rather_than_raising(raw) -> None:
+    """A time nobody agreed on, or one the model mangled, still books: the
+    meeting is real, so a bad timestamp costs the right hour, not the booking."""
+    slot = resolve_slot({"preferred_time": raw} if raw is not None else {})
+
+    assert abs((slot - (datetime.now(timezone.utc) + timedelta(days=1))).total_seconds()) < 5
+
+
+def test_simulated_book_uses_the_agreed_time_too() -> None:
+    """Both providers share resolve_slot so the simulated and real paths cannot
+    disagree about when a meeting is (the sim used to hardcode one date)."""
+    result = asyncio.run(
+        get_provider("book").execute(
+            _make_lead("books"), {"preferred_time": "2026-07-16T09:00:00+03:00"}
+        )
+    )
+
+    assert result.outcome == "booked"
+    assert result.data["slot"] == "2026-07-16T09:00:00+03:00"
+    assert "2026-07-16T09:00:00+03:00" in result.summary
 
 
 def test_get_provider_returns_none_for_unknown_tool() -> None:
