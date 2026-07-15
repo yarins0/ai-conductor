@@ -8,6 +8,7 @@ import httpx
 
 import app.providers as providers  # STEP_DELAY_SECONDS lives on the package (shared, monkeypatchable)
 from app import sim_lead
+from app.call_prompt import as_dialogue
 from app.db import LeadRecord
 from app.providers.base import CredentialGatedProvider, Provider, ToolResult, register_provider
 
@@ -56,7 +57,7 @@ class SimulatedReachProvider(Provider):
             outcome="answered",
             summary=(
                 f"Called {lead.name} at {lead.phone} — they picked up.\n"
-                f"{sim_lead.as_dialogue(transcript)}"
+                f"{as_dialogue(transcript)}"
             ),
             data={"channel": "voice", "transcript": transcript},
         )

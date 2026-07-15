@@ -18,9 +18,9 @@ import websockets
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 
 from app import db, tool_exec
+from app.call_prompt import as_dialogue, lead_call_instructions
 from app.providers import ToolResult
 from app.realtime import REALTIME_MODEL
-from app.sim_lead import as_dialogue
 from app.spec import AssistantSpec
 
 router = APIRouter()  # Twilio-facing webhook/stream paths — no /api prefix
@@ -75,28 +75,6 @@ async def twilio_status(run_id: int, request: Request) -> Response:
             db.add_run_step(run_id, "reach", result.model_dump_json())
             tool_exec.write_back_lead_outcome(run.lead_id, result)
     return Response(status_code=200)
-
-
-def lead_call_instructions(spec: AssistantSpec, lead: db.LeadRecord) -> str:
-    """The assistant's side of a live phone call — same shape as
-    sim_lead._assistant_system_prompt (same spec fields, no second copy of
-    them), plus whatever notes were recorded on this lead."""
-    lines = [
-        f"You are {spec.name}, on a live outbound phone call you placed to "
-        f"{lead.name} at {lead.company}.",
-        f"Your objective on this call: {spec.objective}",
-        f"Persona: {spec.persona}",
-    ]
-    if spec.instructions:
-        lines.append("Follow these instructions:")
-        lines.extend(f"- {instruction}" for instruction in spec.instructions)
-    if lead.notes:
-        lines.append(f"Notes on this lead: {lead.notes}")
-    lines.append(
-        "This is real speech over the phone. One or two sentences per turn, no "
-        "monologues, no stage directions, no narrating what you are doing."
-    )
-    return "\n".join(lines)
 
 
 def _session_update(spec: AssistantSpec, lead: db.LeadRecord) -> dict[str, Any]:

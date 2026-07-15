@@ -8,7 +8,7 @@ import anthropic
 import httpx
 
 import app.providers as providers  # STEP_DELAY_SECONDS lives on the package (shared, monkeypatchable)
-from app import sim_lead
+from app.call_prompt import as_dialogue
 from app.db import LeadRecord
 from app.providers.base import CredentialGatedProvider, Provider, ToolResult, register_provider
 
@@ -83,7 +83,7 @@ async def score_from_transcript(lead: LeadRecord, transcript: list[dict[str, str
                 "role": "user",
                 "content": (
                     f"Call transcript with {lead.name} at {lead.company}:\n"
-                    f"{sim_lead.as_dialogue(transcript)}"
+                    f"{as_dialogue(transcript)}"
                 ),
             }
         ],

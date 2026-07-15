@@ -22,6 +22,7 @@ from typing import Any
 
 import anthropic
 
+from app.call_prompt import lead_call_instructions
 from app.db import LeadRecord
 from app.spec import AssistantSpec
 
@@ -60,29 +61,6 @@ _NEUTRAL_LEAD_PERSONA = (
 _PICKUP_LINE = "Hello?"
 
 
-def _assistant_system_prompt(spec: AssistantSpec, lead: LeadRecord) -> str:
-    """The assistant's side of the call, composed from the spec the Builder wrote —
-    same fields, no second copy of them anywhere."""
-    lines = [
-        f"You are {spec.name}, on a live outbound phone call you placed to "
-        f"{lead.name} at {lead.company}.",
-        f"Your objective on this call: {spec.objective}",
-        f"Persona: {spec.persona}",
-    ]
-    if spec.instructions:
-        lines.append("Follow these instructions:")
-        lines.extend(f"- {instruction}" for instruction in spec.instructions)
-    if lead.notes:
-        lines.append(f"Notes on this lead: {lead.notes}")
-    lines.append(
-        "This is real speech. One or two sentences per turn, no monologues, no "
-        "stage directions, no narrating what you are doing. You have roughly "
-        f"{MAX_CALL_EXCHANGES} exchanges before the call ends, so get to the point "
-        "early and close naturally."
-    )
-    return "\n".join(lines)
-
-
 def _lead_system_prompt(lead: LeadRecord) -> str:
     """The lead's side. Stance comes from sim_profile; everything else is just
     instructions to sound like a person on a phone rather than an assistant."""
@@ -119,7 +97,7 @@ async def run_call(spec: AssistantSpec, lead: LeadRecord) -> list[dict[str, str]
     writing both parts of a screenplay.
     """
     client = anthropic.AsyncAnthropic()
-    assistant_system = _assistant_system_prompt(spec, lead)
+    assistant_system = lead_call_instructions(spec, lead, MAX_CALL_EXCHANGES)
     lead_system = _lead_system_prompt(lead)
 
     transcript: list[dict[str, str]] = [{"speaker": "lead", "text": _PICKUP_LINE}]
@@ -138,8 +116,3 @@ async def run_call(spec: AssistantSpec, lead: LeadRecord) -> list[dict[str, str]
         assistant_messages.append({"role": "user", "content": lead_text})
 
     return transcript
-
-
-def as_dialogue(transcript: list[dict[str, str]]) -> str:
-    """Flatten a transcript into readable lines — for a tool summary or a prompt."""
-    return "\n".join(f"{entry['speaker']}: {entry['text']}" for entry in transcript)
