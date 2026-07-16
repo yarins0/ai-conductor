@@ -18,19 +18,45 @@ GOOGLE_CALENDAR_MEETING_MINUTES = 30
 DEFAULT_SLOT_DAYS_AHEAD = 1
 DEFAULT_EVENT_TITLE = "Meeting"
 
-# Said out loud rather than attempted and swallowed: Google rejects attendees
-# from a service account with 403 forbiddenForServiceAccounts ("Service accounts
-# cannot invite attendees without Domain-Wide Delegation of Authority"), and this
-# project authenticates as a service account, so the invite is not a retry away —
-# it needs user OAuth credentials. Booking a meeting the lead is never told about
-# is a real outcome, but only if it says so; claiming a meeting was set up with
-# someone who never heard about it is the same lie as an intent score no call
-# earned. Only surfaced when there is an email — with none on file there was
-# nobody to invite in the first place.
+# Booking a meeting the lead is never told about is a real outcome, but only if
+# it says so; claiming a meeting was set up with someone who never heard about
+# it is the same lie as an intent score no call earned. Only surfaced when there
+# is an email — with none on file there was nobody to invite in the first place.
 NO_INVITE_NOTE = (
     "The lead was not invited: this calendar is reached with a service account, "
     "which Google does not allow to invite attendees."
 )
+
+
+async def _post_event(
+    client: httpx.AsyncClient,
+    calendar_id: str,
+    token: str,
+    body: dict[str, Any],
+    *,
+    send_updates: str | None = None,
+) -> httpx.Response:
+    return await client.post(
+        f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"sendUpdates": send_updates} if send_updates else {},
+        json=body,
+    )
+
+
+def _is_forbidden_for_service_account(response: httpx.Response) -> bool:
+    # A service account without Domain-Wide Delegation of Authority rejects the
+    # *whole* event-creation request when it carries attendees — verified
+    # against live credentials (see docs/DECISIONS.md). Checked by reason, not
+    # just status_code == 403: a different 403 (bad scope, calendar not shared)
+    # is a real failure and must still propagate, not be swallowed as this one.
+    if response.status_code != 403:
+        return False
+    try:
+        errors = response.json().get("error", {}).get("errors", [])
+    except ValueError:
+        return False
+    return any(error.get("reason") == "forbiddenForServiceAccounts" for error in errors)
 
 
 def event_title(lead: LeadRecord | None, settings: dict[str, Any]) -> str:
@@ -87,7 +113,9 @@ class SimulatedBookProvider(Provider):
                 if lead
                 else f"Booked '{title}' at {slot}."
             ),
-            data={"slot": slot},
+            # No real API to fail against here, so parity with the real
+            # provider's now-genuine `invited` field is unconditional.
+            data={"slot": slot, "invited": bool(lead and lead.email)},
         )
 
 
@@ -114,22 +142,35 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
         slot_start = resolve_slot(settings)
         slot_end = slot_start + timedelta(minutes=GOOGLE_CALENDAR_MEETING_MINUTES)
         title = event_title(lead, settings)
+        event_body: dict[str, Any] = {
+            "summary": title,
+            "description": (
+                f"Booked by ai-conductor for {lead.company}."
+                if lead
+                else "Booked by ai-conductor."
+            ),
+            "start": {"dateTime": slot_start.isoformat()},
+            "end": {"dateTime": slot_end.isoformat()},
+        }
 
+        invited = False
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events",
-                headers={"Authorization": f"Bearer {credentials.token}"},
-                json={
-                    "summary": title,
-                    "description": (
-                        f"Booked by ai-conductor for {lead.company}."
-                        if lead
-                        else "Booked by ai-conductor."
-                    ),
-                    "start": {"dateTime": slot_start.isoformat()},
-                    "end": {"dateTime": slot_end.isoformat()},
-                },
-            )
+            if lead and lead.email:
+                # Attempted, not assumed: only a live 403 with this exact reason
+                # falls back to booking without the invite (see docs/DECISIONS.md).
+                response = await _post_event(
+                    client,
+                    calendar_id,
+                    credentials.token,
+                    {**event_body, "attendees": [{"email": lead.email}]},
+                    send_updates="all",
+                )
+                if _is_forbidden_for_service_account(response):
+                    response = await _post_event(client, calendar_id, credentials.token, event_body)
+                else:
+                    invited = True
+            else:
+                response = await _post_event(client, calendar_id, credentials.token, event_body)
         response.raise_for_status()
         event = response.json()
 
@@ -140,7 +181,7 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
             else f"Booked '{title}' at {slot} (Google Calendar)."
         )
         if lead and lead.email:
-            summary = f"{summary} {NO_INVITE_NOTE}"
+            summary = f"{summary} {'The lead was invited.' if invited else NO_INVITE_NOTE}"
 
         return ToolResult(
             tool="book",
@@ -151,7 +192,7 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
                 "slot": slot,
                 "event_id": event["id"],
                 "event_link": event.get("htmlLink"),
-                "invited": False,
+                "invited": invited,
             },
         )
 

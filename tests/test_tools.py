@@ -215,3 +215,12 @@ def test_book_provider_always_books() -> None:
 
     assert result.outcome == "booked"
     assert "slot" in result.data
+    assert result.data["invited"] is False  # no email on this lead
+
+
+def test_simulated_book_reports_invited_when_lead_has_an_email() -> None:
+    lead = _make_lead("books").model_copy(update={"email": "dana@acme.com"})
+
+    result = asyncio.run(get_provider("book").execute(lead, {}))
+
+    assert result.data["invited"] is True
