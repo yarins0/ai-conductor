@@ -87,17 +87,22 @@ function appendStepCard(data) {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-// Opens the run's SSE stream and appends each new step to the chat as it lands —
-// used for a real (Twilio) reach call, which returns "initiated" immediately
-// and resolves minutes later when the bridge writes the actual reach step.
-// `onStep(data)` runs per step and returns true once it's the one being
-// awaited. The server self-terminates the stream after ~60s (MAX_STREAM_POLLS
-// in app/main.py) even though a real call can run longer, so a `done` without
-// the awaited step found reopens the stream rather than giving up.
+// Opens the run's SSE stream to catch the ONE step a caller is waiting for —
+// used for a real (Twilio) reach call, which returns "initiated" immediately and
+// resolves minutes later when the bridge writes the actual reach step. `onStep(data)`
+// runs per step and returns true once it's the one being awaited; only that step
+// is rendered, and the stream closes the moment it arrives. The server
+// self-terminates the stream after ~60s (MAX_STREAM_POLLS in app/main.py) even
+// though a real call can run longer, so a `done` before the awaited step reopens
+// the stream rather than giving up.
 //
-// `skip` is the step count already known (and already rendered directly by the
-// caller) before this stream opened — every reconnect replays all persisted
-// steps from the start, so without this the earlier steps would double up.
+// It renders only the awaited step, not every step, because in a live session the
+// same run also collects book/qualify steps that realtime.js has already rendered
+// directly — carding those again off the stream is the double-render this avoids.
+//
+// `skip` is the step count already seen before this stream opened — every reopen
+// replays all persisted steps from the start, so without this the awaited step
+// could be matched twice across reconnects.
 async function openRunStream(runId, { onStep } = {}) {
   let resolved = false;
   let skip = 0;
@@ -116,11 +121,14 @@ async function openRunStream(runId, { onStep } = {}) {
       if (data.type === "step") {
         const position = index++;
         if (position < skip) return;
-        // Advance past everything rendered so a reconnect's full replay can't
-        // double-render steps that arrived during the previous stream.
+        // Advance past everything seen so a reopen's full replay can't re-match
+        // steps handled by the previous stream.
         skip = position + 1;
-        appendStepCard(data);
-        if (onStep && onStep(data)) resolved = true;
+        if (onStep && onStep(data)) {
+          appendStepCard(data);
+          resolved = true;
+          source.close();
+        }
       } else if (data.type === "done") {
         source.close();
         if (!resolved) open();
