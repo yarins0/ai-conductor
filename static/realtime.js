@@ -237,6 +237,12 @@ function handleDisconnect() {
   micMuteBtn.disabled = true;
   micMuteBtn.textContent = "Mute mic";
   micMuted = false;
+  // Detach the teardown handlers before closing: closing pc/dc fires
+  // "closed"/"close" asynchronously, and on a reconnect (handleDisconnect then
+  // connect) those late events would otherwise land after the new session is up
+  // and tear it straight back down — a dead mic button and a null micTrack.
+  if (pc) pc.onconnectionstatechange = null;
+  dc?.removeEventListener("close", handleDisconnect);
   micTrack?.stop();
   pc?.close();
   micTrack = null;
