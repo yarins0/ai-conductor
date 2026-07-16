@@ -1,9 +1,10 @@
 """GoogleCalendarBookProvider — the invite is attempted, not assumed.
 
-No network: `service_account.Credentials.from_service_account_file` is faked to
-avoid needing a real key file, and `httpx.AsyncClient.post` is faked keyed on
-whether the outgoing body carries `attendees`, so these assert the exact
-attempt-then-fallback shape the provider is built around.
+No network: `load_credentials_from_file` is faked to avoid needing a real
+credentials file, and `httpx.AsyncClient.post` is faked keyed on whether the
+outgoing body carries `attendees`, so these assert the exact attempt-then-fallback
+shape the provider is built around. The fake stands in for either credential type
+the loader accepts — the provider's behaviour past the load is the same for both.
 """
 
 import asyncio
@@ -11,12 +12,12 @@ from typing import Any
 
 import httpx
 import pytest
-from google.oauth2 import service_account
 
 from app import db
+from app.providers import book
 from app.providers.book import GoogleCalendarBookProvider
 
-CREDS_PATH = "fake-service-account.json"
+CREDS_PATH = "fake-credentials.json"
 
 
 class _FakeCredentials:
@@ -29,11 +30,8 @@ class _FakeCredentials:
 @pytest.fixture(autouse=True)
 def _fake_credentials(monkeypatch):
     monkeypatch.setenv("GOOGLE_CALENDAR_CREDENTIALS", CREDS_PATH)
-    monkeypatch.setattr(
-        service_account.Credentials,
-        "from_service_account_file",
-        lambda *a, **k: _FakeCredentials(),
-    )
+    # Returns the loader's (credentials, project_id) tuple; the project id is unused.
+    monkeypatch.setattr(book, "load_credentials_from_file", lambda *a, **k: (_FakeCredentials(), None))
 
 
 def _lead(email: str | None = "dana@acme.com") -> db.LeadRecord:

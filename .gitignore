@@ -1,6 +1,12 @@
 # Environment / secrets
 .env
 ai-conductor-*.json
+# Google Calendar credentials live here and are named by the operator, so ignore
+# the directory rather than a filename pattern: a service-account key is a
+# credential, and an "authorized_user" file holds a refresh token that grants
+# calendar access until revoked. Only the fill-in-the-blanks template is tracked.
+secrets/*
+!secrets/.env.example
 
 # Python
 .venv/

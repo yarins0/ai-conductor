@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from google.auth import load_credentials_from_file
 from google.auth.transport.requests import Request as GoogleAuthRequest
-from google.oauth2 import service_account
 
 import app.providers as providers  # STEP_DELAY_SECONDS lives on the package (shared, monkeypatchable)
 from app.db import LeadRecord
@@ -126,15 +126,17 @@ class GoogleCalendarBookProvider(CredentialGatedProvider):
 
     async def execute(self, lead: LeadRecord | None, settings: dict[str, Any]) -> ToolResult:
         creds_path = os.environ["GOOGLE_CALENDAR_CREDENTIALS"]
-        # ponytail: "primary" only works if GOOGLE_CALENDAR_CREDENTIALS is a user
-        # OAuth token. A service-account key (the common case) has no usable
-        # primary calendar — share a real calendar with the service account's
-        # email and put its ID here instead.
+        # "primary" is the operator's own calendar, which only user OAuth
+        # credentials have. A service-account key has no usable primary calendar:
+        # share a real calendar with the service account's address and put that
+        # calendar's ID here instead.
         calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 
-        credentials = service_account.Credentials.from_service_account_file(
-            creds_path, scopes=GOOGLE_CALENDAR_SCOPES
-        )
+        # Either a service-account key or user OAuth ("authorized_user")
+        # credentials, dispatched on the file's "type" by google-auth. Which one
+        # decides whether an invite can go out at all: a service account cannot
+        # invite attendees, a user token can. See docs/DECISIONS.md.
+        credentials, _ = load_credentials_from_file(creds_path, scopes=GOOGLE_CALENDAR_SCOPES)
         # Sync call (mints a short-lived OAuth token) inside an async method — fine for
         # one request; wrap in asyncio.to_thread if this path needs real concurrency.
         credentials.refresh(GoogleAuthRequest())

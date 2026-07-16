@@ -43,6 +43,11 @@ python -m app.main
 - **`ANTHROPIC_API_KEY`** — the Builder (spec generation/editing) and the simulated lead call (`app/sim_lead.py`).
 - **`OPENAI_API_KEY`** — required for voice. The operator session talks to OpenAI directly over WebRTC once this server mints it a token; no tunnel needed for this surface.
 - **`TWILIO_*` + `PUBLIC_BASE_URL`** — only needed for a *real* phone call. Twilio must be able to reach this server for its voice webhook and Media Stream, so run `ngrok http 8123` (or whatever port you're on), paste the printed `https://...` URL into `PUBLIC_BASE_URL`, and **restart the server** — `load_dotenv` only runs once at import, so a process already running keeps the old value even after you edit the file. Without these, `reach` still runs the simulated two-agent call.
+- **`GOOGLE_CALENDAR_CREDENTIALS` + `GOOGLE_CALENDAR_ID`** — only needed to book on a *real* calendar; without them `book` uses the simulated one. `GOOGLE_CALENDAR_CREDENTIALS` is a path to a Google credentials JSON, and **which kind you give it decides whether the lead is actually invited**:
+  - A **service-account key** books a real event, but Google refuses to let a service account invite attendees (without Domain-Wide Delegation), so the booking degrades to an attendee-less event and the result says so rather than claiming an invite it never sent. A service account also has no `primary` calendar — share a calendar with the service account's address and put *that* calendar's ID in `GOOGLE_CALENDAR_ID`.
+  - **User OAuth credentials** act as you, so the invite really goes out. Write a file shaped `{"type": "authorized_user", "client_id": "...", "client_secret": "...", "refresh_token": "..."}` — mint the refresh token once against the `https://www.googleapis.com/auth/calendar.events` scope using your Google Cloud OAuth client, e.g. via the [OAuth Playground](https://developers.google.com/oauthplayground) — and leave `GOOGLE_CALENDAR_ID` at its `primary` default. The scope granted *when the token was minted* is what counts.
+
+  Keep either file in `secrets/` — everything there but `.env.example` is gitignored.
 
 Open **http://localhost:8123**. Override the port with the `PORT` env var. Reset the demo data by deleting `db/ai_conductor.db` — it reseeds the 3 demo leads on next boot.
 
