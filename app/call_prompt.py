@@ -40,6 +40,8 @@ def lead_call_instructions(
         # the call is part of what it describes.
         f"The goal you were built for, of which this call is one step: {spec.objective}",
         f"Persona: {spec.persona}",
+        f"Speak and understand only language code '{spec.language}' — never switch "
+        "languages mid-conversation, even if a turn seems to come from another one.",
     ]
     if spec.instructions:
         lines.append(

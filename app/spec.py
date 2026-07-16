@@ -21,6 +21,10 @@ class AssistantSpec(BaseModel):
     persona: str  # voice/behavior description
     instructions: list[str] = Field(default_factory=list)
     tools: list[ToolConfig]
+    # ISO-639-1 code (e.g. "en", "he"). Pins transcription and the on-call
+    # prompt to one language so a mis-transcribed turn can't flip the
+    # conversation into another one mid-call.
+    language: str = "en"
 
 
 def assistant_spec_json_schema() -> dict[str, Any]:

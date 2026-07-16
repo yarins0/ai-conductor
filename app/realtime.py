@@ -99,7 +99,12 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
             # g711_ulaw format (WebRTC negotiates its own codec) — gives the UI the
             # operator's own words via input transcription, and a fixed voice.
             "audio": {
-                "input": {"transcription": {"model": "gpt-realtime-whisper"}},
+                # Pinning language stops Whisper's per-utterance auto-detect from
+                # mis-hearing accented/short audio as another language and
+                # flipping the conversation into it.
+                "input": {
+                    "transcription": {"model": "gpt-realtime-whisper", "language": spec.language}
+                },
                 "output": {"voice": "marin"},
             },
         }

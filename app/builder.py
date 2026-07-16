@@ -39,7 +39,10 @@ SYSTEM_PROMPT = (
     '- `tools` reference registry keys; the available registry keys are "reach" '
     '(place an outbound call), "qualify" (score lead intent), and "book" '
     "(schedule a meeting). Include the tools the described assistant needs; "
-    "include all three when the user describes a full outreach flow."
+    "include all three when the user describes a full outreach flow.\n"
+    '- `language` is the ISO-639-1 code the assistant speaks and understands on '
+    'calls (e.g. "en", "he"). Default to "en" unless the description says '
+    "otherwise."
 )
 
 
@@ -106,6 +109,7 @@ _STRING_FIELD_TOOLS = {
     "set_name": ("name", "the assistant's short title"),
     "set_objective": ("objective", "the one-sentence objective"),
     "set_persona": ("persona", "the voice/manner description"),
+    "set_language": ("language", "the ISO-639-1 language code (e.g. \"en\", \"he\")"),
 }
 
 

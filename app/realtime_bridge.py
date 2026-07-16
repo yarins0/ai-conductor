@@ -93,7 +93,9 @@ def _session_update(spec: AssistantSpec, lead: db.LeadRecord) -> dict[str, Any]:
                 "input": {
                     "format": {"type": "audio/pcmu"},  # Twilio Media Streams are G.711 mu-law
                     "turn_detection": {"type": "server_vad"},
-                    "transcription": {"model": TRANSCRIPTION_MODEL},
+                    # Pinned so a mis-heard turn can't auto-detect into another
+                    # language and flip the conversation (same fix as realtime.py).
+                    "transcription": {"model": TRANSCRIPTION_MODEL, "language": spec.language},
                 },
                 "output": {"format": {"type": "audio/pcmu"}},
             },

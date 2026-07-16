@@ -14,6 +14,18 @@ def test_valid_spec_parses() -> None:
     )
     assert spec.name == "Demo Assistant"
     assert spec.tools[0].name == "reach"
+    assert spec.language == "en"  # default when the description doesn't say
+
+
+def test_language_can_be_set_explicitly() -> None:
+    spec = AssistantSpec(
+        name="Demo Assistant",
+        objective="Book a meeting with qualified leads",
+        persona="Friendly, concise, professional",
+        tools=[{"name": "reach", "settings": {}}],
+        language="he",
+    )
+    assert spec.language == "he"
 
 
 def test_missing_objective_rejected() -> None:

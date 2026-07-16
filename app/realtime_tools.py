@@ -207,6 +207,8 @@ def operator_instructions(spec: AssistantSpec) -> str:
         "with a prospect right now.",
         f"Your objective when you work a lead: {spec.objective}",
         f"Persona: {spec.persona}",
+        f"Speak and understand only language code '{spec.language}' — never switch "
+        "languages mid-conversation, even if a turn seems to come from another one.",
     ]
     if spec.instructions:
         lines.append("Your instructions when working a lead:")

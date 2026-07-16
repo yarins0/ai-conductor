@@ -76,6 +76,16 @@ def test_instructions_are_carried_but_scoped_to_the_conversation() -> None:
     assert "You have no tools on this call." in prompt
 
 
+def test_language_is_pinned_from_the_spec() -> None:
+    """A mis-transcribed turn must not be able to flip the model into another
+    language mid-call — the spec's language is stated explicitly as a backstop
+    alongside pinning the transcription config itself."""
+    assert "language code 'en'" in lead_call_instructions(SPEC, _lead())
+
+    spec = SPEC.model_copy(update={"language": "he"})
+    assert "language code 'he'" in lead_call_instructions(spec, _lead())
+
+
 def test_lead_notes_are_included_only_when_present() -> None:
     assert "Notes on this lead: Met at a conference." in lead_call_instructions(
         SPEC, _lead(notes="Met at a conference.")

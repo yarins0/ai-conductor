@@ -107,6 +107,18 @@ def test_edit_applies_mutations_then_finishes(monkeypatch):
     assert [tool.name for tool in result.tools] == ["reach", "qualify", "book"]
 
 
+def test_edit_can_set_language(monkeypatch):
+    client = _fake_client_returning([
+        _response(_block("set_language", {"language": "he"})),
+        _response(_block("finish")),
+    ])
+    _patch_client(monkeypatch, client)
+
+    result = builder.edit_spec(SAMPLE_SPEC, "make it speak Hebrew")
+
+    assert result.language == "he"
+
+
 def test_edit_recovers_from_invalid_tool_argument(monkeypatch):
     # First turn asks to remove a tool that isn't there — a soft error that must
     # be fed back (not raised); the model then makes a valid edit and finishes.

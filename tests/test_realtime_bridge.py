@@ -215,6 +215,7 @@ def test_bridge_relays_media_unmodified_and_sends_session_update_first(monkeypat
     assert session["type"] == "realtime"
     assert session["audio"]["input"]["format"] == {"type": "audio/pcmu"}
     assert session["audio"]["output"]["format"] == {"type": "audio/pcmu"}
+    assert session["audio"]["input"]["transcription"]["language"] == "en"
     assert "Prefers mornings" in session["instructions"]
 
     # ...and we greet first: an outbound call whose assistant waits for the lead

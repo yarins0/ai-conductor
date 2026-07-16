@@ -59,6 +59,9 @@ def test_token_scopes_tools_to_spec(client, fake_openai_http):
     # a book-only assistant must not be offered reach or qualify.
     assert tool_names == ["book", "list_leads", "request_lead", "web_search"]
     assert "Booker" in payload["session"]["instructions"]
+    # Pinned so Whisper's per-utterance auto-detect can't flip the session into
+    # another language on short/accented audio.
+    assert payload["session"]["audio"]["input"]["transcription"]["language"] == "en"
 
 
 def test_token_spec_version_tracks_edits_and_matches_the_polled_field(client, fake_openai_http):
